@@ -11,6 +11,7 @@ pub type Counter = u64;
 pub struct TestbedConfig {
     pub server_id: Pid,
     pub nodes: Vec<Pid>,
+    pub experiment: String,
 }
 
 pub type FromNodeConnection = Framed<
@@ -55,5 +56,5 @@ pub enum RegistrationMessage {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ClusterMessage {
-    
+
 }

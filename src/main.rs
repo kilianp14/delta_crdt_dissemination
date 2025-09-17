@@ -1,12 +1,15 @@
 use std::{env, fs};
+use crate::experiment_engine::ExperimentEngine;
 use crate::shared::TestbedConfig;
 
 mod crdt;
 mod or_set;
 mod shared;
 mod network;
+mod experiment_engine;
+mod experiments;
 
-const NETWORK_BATCH_SIZE: usize = 100;
+//const NETWORK_BATCH_SIZE: usize = 100;
 
 #[tokio::main]
 async fn main() {
@@ -21,9 +24,11 @@ async fn main() {
         Err(e) => panic!("{e}"),
     };
     println!("{server_config:?}");
-    //let mut cluster_msg_buf = Vec::with_capacity(NETWORK_BATCH_SIZE);
+    let experiment_engine = ExperimentEngine::new(server_config.experiment.as_str());
+    experiment_engine.run();
+    /*let mut cluster_msg_buf = Vec::with_capacity(NETWORK_BATCH_SIZE);
     let network = network::Network::new(server_config.server_id, server_config.nodes, NETWORK_BATCH_SIZE).await;
-    /*loop {
+    loop {
         network.send_to_cluster((server_config.server_id % 3) + 1, ClusterMessage::TestMessage(server_config.server_id)).await;
         let mut cluster_messages = network.cluster_messages.lock().await;
         cluster_messages.recv_many(&mut cluster_msg_buf, NETWORK_BATCH_SIZE).await;
