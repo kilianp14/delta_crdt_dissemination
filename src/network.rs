@@ -56,8 +56,6 @@ impl Network {
             let peer_conns_clone = Arc::clone(&self.peer_connections);
             let mut peer_connections = peer_conns_clone.lock().await;
             peer_connections[peer_idx] = Some(new_connection);
-            let peer_conns_clone = Arc::clone(&self.peer_connections);
-            let peer_connections = peer_conns_clone.lock().await;
             let all_cluster_connected = peer_connections.iter().all(|c| c.is_some());
             if all_cluster_connected {
                 listener_handle.abort();
@@ -143,7 +141,7 @@ impl Network {
     fn spawn_peer_connectors(&self, connection_sender: Sender<PeerConnection>) {
         let my_id = self.id;
         let peers_to_contact: Vec<Pid> =
-            self.peers.iter().cloned().filter(|&p| p > my_id).collect();
+            self.peers.iter().cloned().filter(|&p| p != my_id).collect();
         for peer in peers_to_contact {
             let to_address = match get_node_addr(peer) {
                 Ok(addr) => addr,
