@@ -1,6 +1,10 @@
 use crate::shared::Pid;
 use serde::{de::DeserializeOwned, Serialize};
-use std::{collections::HashMap, fmt::Debug, net::SocketAddr};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    net::{SocketAddr, ToSocketAddrs},
+};
 use tokio::{
     io::{
         self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines, ReadHalf, WriteHalf,
@@ -19,7 +23,8 @@ pub struct Network<T> {
 }
 
 impl<T: Send + 'static + Serialize + DeserializeOwned + Debug + Sync + Clone> Network<T> {
-    pub async fn new(address: SocketAddr, pid: Pid, peer_addresses: Vec<SocketAddr>) -> Self {
+    pub async fn new(pid: Pid, peers: Vec<Pid>) -> Self {
+        let address = get_node_addr(pid).unwrap();
         let (msg_sender, msg_receiver) = channel::<(Pid, T)>(1000);
         let listener = TcpListener::bind(address)
             .await
@@ -35,8 +40,9 @@ impl<T: Send + 'static + Serialize + DeserializeOwned + Debug + Sync + Clone> Ne
         };
 
         // Connect eagerly to known peers
-        for addr in peer_addresses {
-            net.connect_to_peer(addr, msg_sender.clone()).await;
+        for id in peers {
+            let peer_address = get_node_addr(id).unwrap();
+            net.connect_to_peer(peer_address, msg_sender.clone()).await;
         }
 
         net
@@ -107,4 +113,11 @@ impl<T: Send + 'static + Serialize + DeserializeOwned + Debug + Sync + Clone> Ne
             let _ = sender.send(message.clone()).await;
         }
     }
+}
+
+fn get_node_addr(node: Pid) -> Result<SocketAddr, std::io::Error> {
+    let node_port = 8000 + node as u16;
+    let dns_name: String = format!("s{node}:{node_port}");
+    let address = dns_name.to_socket_addrs()?.next().unwrap();
+    Ok(address)
 }
