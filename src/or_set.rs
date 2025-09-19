@@ -2,14 +2,14 @@ use crate::{
     crdt::{DeltaCRDT, VersionVector},
     shared::{Counter, Pid},
 };
+use rand::seq::IteratorRandom;
+use rand::Rng;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Debug,
     hash::Hash,
 };
-use rand::Rng;
-use rand::seq::IteratorRandom;
-use serde::{Deserialize, Serialize};
-use serde::de::DeserializeOwned;
 
 pub trait Randomizable {
     fn random() -> Self;
@@ -22,9 +22,26 @@ impl Randomizable for i32 {
     }
 }
 
-pub trait OrSetItem: Eq + Hash + Clone + Randomizable {}
-impl<T: Eq + Hash + Clone + Randomizable> OrSetItem for T {}
+pub trait OrSetItem:
+    Eq + Hash + Clone + Randomizable + Serialize + DeserializeOwned + Send + Sync + Debug + 'static
+{
+}
+impl<
+        T: Eq
+            + Hash
+            + Clone
+            + Randomizable
+            + Serialize
+            + DeserializeOwned
+            + Send
+            + Sync
+            + Debug
+            + 'static,
+    > OrSetItem for T
+{
+}
 
+#[derive(Debug, Clone)]
 pub struct OrSet<T: OrSetItem> {
     pid: Pid,
     adds: HashMap<T, HashSet<(Pid, Counter)>>,
@@ -47,14 +64,15 @@ pub enum OrSetResponse<T: OrSetItem> {
     Members(Vec<T>),
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct OrSetDelta<T> where T: OrSetItem {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OrSetDelta<T: OrSetItem> {
+    #[serde(bound = "")]
     adds: HashMap<T, HashSet<(Pid, Counter)>>,
     tombstones: HashSet<(Pid, Counter)>,
     version_vector: VersionVector,
 }
 
-impl<T: OrSetItem + DeserializeOwned + Serialize> DeltaCRDT for OrSet<T> {
+impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
     type Query = OrSetQuery<T>;
     type Update = OrSetUpdate<T>;
     type Response = OrSetResponse<T>;

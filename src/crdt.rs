@@ -1,7 +1,8 @@
 use crate::shared::{Counter, Pid};
-use serde::{Deserialize, Serialize};
-use std::{cmp::Ordering, collections::HashMap};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
+use std::{cmp::Ordering, collections::HashMap};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 /// Vector clock implementation
@@ -58,10 +59,10 @@ impl VersionVector {
     }
 }
 
-pub trait DeltaCRDT {
+pub trait DeltaCRDT: Clone + Debug + 'static {
     type Query;
     type Update;
-    type Delta: Serialize + DeserializeOwned + Clone;
+    type Delta: Clone + Debug + Serialize + DeserializeOwned + Send + Sync;
     type Response;
 
     /// Gets the state
@@ -75,6 +76,7 @@ pub trait DeltaCRDT {
 
     /// Applies the remote delta to the local state
     fn merge_delta(&mut self, delta: Self::Delta);
+
     fn get_version_vector(&self) -> &VersionVector;
 
     fn generate_random_update(&self) -> Self::Update;

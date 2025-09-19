@@ -1,24 +1,33 @@
-use std::time::Duration;
-use log::info;
-use rand::seq::IteratorRandom;
-use crate::crdt::DeltaCRDT;
+use crate::crdt::{DeltaCRDT, VersionVector};
 use crate::network::Network;
-use crate::or_set::{OrSet, OrSetUpdate};
-use crate::shared::{ClusterMessage, Pid};
+use crate::shared::Pid;
+use rand::seq::IteratorRandom;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 const POLL_TIMEOUT: Duration = Duration::from_millis(100);
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
 const NETWORK_BATCH_SIZE: usize = 100;
 
-pub struct Node <T: DeltaCRDT> {
-    server_id: Pid,
-    network: Network,
-    crdt: T
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ClusterMessage<T: DeltaCRDT> {
+    VersionVectorMessage(VersionVector),
+    DeltaMessage(T::Delta),
 }
 
-impl <T: DeltaCRDT> Node<T> {
-    pub fn new(network: Network, server_id: Pid, crdt: T) -> Self {
-        Self {server_id, network, crdt}
+pub struct Node<T: DeltaCRDT> {
+    server_id: Pid,
+    network: Network<ClusterMessage<T>>,
+    crdt: T,
+}
+
+impl<T: DeltaCRDT> Node<T> {
+    pub fn new(network: Network<ClusterMessage<T>>, server_id: Pid, crdt: T) -> Self {
+        Self {
+            server_id,
+            network,
+            crdt,
+        }
     }
 
     pub async fn run(&mut self) {
@@ -46,15 +55,15 @@ impl <T: DeltaCRDT> Node<T> {
         }
     }
 
-    async fn handle_cluster_messages(&mut self, cluster_messages: &mut Vec<(Pid, ClusterMessage<OrSet<i32>>)>) {
+    async fn handle_cluster_messages(
+        &mut self,
+        cluster_messages: &mut Vec<(Pid, ClusterMessage<T>)>,
+    ) {
         for (sender, msg) in cluster_messages.drain(..) {
             match msg {
-                ClusterMessage::VersionVectorMessage(version_vector) => {
-
-                },
+                ClusterMessage::VersionVectorMessage(version_vector) => {}
                 ClusterMessage::DeltaMessage(_) => todo!(),
             }
         }
     }
 }
-
