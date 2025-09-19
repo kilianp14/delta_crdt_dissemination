@@ -10,15 +10,16 @@ use tokio_util::sync::CancellationToken;
 use log::{error, info, warn};
 use tokio::io::AsyncWriteExt;
 use tokio::task::JoinHandle;
+use crate::or_set::OrSet;
 use crate::shared::{frame_cluster_connection, frame_registration_connection, ClusterMessage, Pid, RegistrationMessage};
 
 pub struct Network {
     id: Pid,
-    peers: Vec<Pid>,
+    pub peers: Vec<Pid>,
     peer_connections: Arc<Mutex<Vec<Option<PeerConnection>>>>,
     batch_size: usize,
-    pub cluster_message_sender: Sender<(Pid, ClusterMessage)>,
-    pub cluster_messages: Arc<Mutex<Receiver<(Pid, ClusterMessage)>>>,
+    pub cluster_message_sender: Sender<(Pid, ClusterMessage<OrSet<i32>>)>,
+    pub cluster_messages: Receiver<(Pid, ClusterMessage<OrSet<i32>>)>,
     cancel_token: CancellationToken,
 }
 
@@ -40,7 +41,7 @@ impl Network {
             peer_connections: Arc::new(Mutex::new(cluster_connections)),
             batch_size,
             cluster_message_sender,
-            cluster_messages: Arc::new(Mutex::new(cluster_messages)),
+            cluster_messages: cluster_messages,
             cancel_token: CancellationToken::new(),
         };
         network.initialize_connections().await;
@@ -96,7 +97,7 @@ impl Network {
 
     async fn handle_incoming_connection(
         connection: TcpStream,
-        cluster_message_sender: Option<Sender<(Pid, ClusterMessage)>>,
+        cluster_message_sender: Option<Sender<(Pid, ClusterMessage<OrSet<i32>>)>>,
         connection_sender: Sender<PeerConnection>,
         batch_size: usize,
         cancel_token: CancellationToken,
@@ -141,7 +142,7 @@ impl Network {
     fn spawn_peer_connectors(&self, connection_sender: Sender<PeerConnection>) {
         let my_id = self.id;
         let peers_to_contact: Vec<Pid> =
-            self.peers.iter().cloned().filter(|&p| p != my_id).collect();
+            self.peers.iter().cloned().filter(|&p| p > my_id).collect();
         for peer in peers_to_contact {
             let to_address = match get_node_addr(peer) {
                 Ok(addr) => addr,
@@ -192,7 +193,7 @@ impl Network {
         }
     }
 
-    pub async fn send_to_cluster(&self, to: Pid, msg: ClusterMessage) {
+    pub async fn send_to_cluster(&self, to: Pid, msg: ClusterMessage<OrSet<i32>>) {
         let peer_conns_clone = Arc::clone(&self.peer_connections);
         let mut peer_connections = peer_conns_clone.lock().await;
         match self.cluster_id_to_idx(to) {
@@ -243,7 +244,7 @@ fn get_node_addr(
 struct PeerConnection {
     peer_id: Pid,
     writer_task: JoinHandle<()>,
-    outgoing_messages: UnboundedSender<ClusterMessage>,
+    outgoing_messages: UnboundedSender<ClusterMessage<OrSet<i32>>>,
 }
 
 impl PeerConnection {
@@ -251,7 +252,7 @@ impl PeerConnection {
         peer_id: Pid,
         connection: TcpStream,
         batch_size: usize,
-        incoming_messages: Sender<(Pid, ClusterMessage)>,
+        incoming_messages: Sender<(Pid, ClusterMessage<OrSet<i32>>)>,
         cancel_token: CancellationToken,
     ) -> Self {
         let (reader, mut writer) = frame_cluster_connection(connection);
@@ -326,8 +327,8 @@ impl PeerConnection {
 
     pub fn send(
         &mut self,
-        msg: ClusterMessage,
-    ) -> Result<(), mpsc::error::SendError<ClusterMessage>> {
+        msg: ClusterMessage<OrSet<i32>>,
+    ) -> Result<(), mpsc::error::SendError<ClusterMessage<OrSet<i32>>>> {
         self.outgoing_messages.send(msg)
     }
 

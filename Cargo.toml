@@ -12,6 +12,7 @@ tokio-util = { version = "0.7.16", features = ["codec"] }
 futures = "0.3.31"
 env_logger = "0.10.2"
 toml = "0.8.23"
+rand = "0.8.5"
 
 [[bin]]
 name = "server"

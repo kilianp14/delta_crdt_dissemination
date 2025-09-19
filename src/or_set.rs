@@ -6,9 +6,24 @@ use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
 };
+use rand::Rng;
+use rand::seq::IteratorRandom;
+use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 
-pub trait OrSetItem: Eq + Hash + Clone {}
-impl<T: Eq + Hash + Clone> OrSetItem for T {}
+pub trait Randomizable {
+    fn random() -> Self;
+}
+
+impl Randomizable for i32 {
+    fn random() -> Self {
+        let mut rng = rand::thread_rng();
+        rng.gen()
+    }
+}
+
+pub trait OrSetItem: Eq + Hash + Clone + Randomizable {}
+impl<T: Eq + Hash + Clone + Randomizable> OrSetItem for T {}
 
 pub struct OrSet<T: OrSetItem> {
     pid: Pid,
@@ -32,13 +47,14 @@ pub enum OrSetResponse<T: OrSetItem> {
     Members(Vec<T>),
 }
 
-pub struct OrSetDelta<T: OrSetItem> {
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OrSetDelta<T> where T: OrSetItem {
     adds: HashMap<T, HashSet<(Pid, Counter)>>,
     tombstones: HashSet<(Pid, Counter)>,
     version_vector: VersionVector,
 }
 
-impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
+impl<T: OrSetItem + DeserializeOwned + Serialize> DeltaCRDT for OrSet<T> {
     type Query = OrSetQuery<T>;
     type Update = OrSetUpdate<T>;
     type Response = OrSetResponse<T>;
@@ -137,10 +153,31 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
         // Merge version vectors
         self.version_vector.merge(&delta.version_vector);
     }
+
+    fn get_version_vector(&self) -> &VersionVector {
+        &self.version_vector
+    }
+    fn generate_random_update(&self) -> Self::Update {
+        let mut rng = rand::thread_rng();
+        // Random true/false
+        let b: bool = rng.gen();
+        if b {
+            let item = T::random();
+            Self::Update::Add(item)
+        } else {
+            let elem = self.adds.iter().choose(&mut rng);
+            if let Some((item, _)) = elem {
+                Self::Update::Remove(item.clone())
+            } else {
+                let item = T::random();
+                Self::Update::Add(item)
+            }
+        }
+    }
 }
 
 impl<T: OrSetItem> OrSet<T> {
-    fn new(pid: Pid) -> Self {
+    pub fn new(pid: Pid) -> Self {
         Self {
             pid,
             adds: HashMap::new(),

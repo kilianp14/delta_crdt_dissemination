@@ -3,6 +3,8 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 pub use tokio_serde::{formats::Bincode, Framed};
 use tokio_util::codec::{Framed as CodecFramed, FramedRead, FramedWrite, LengthDelimitedCodec};
+use crate::crdt::{DeltaCRDT, VersionVector};
+use crate::or_set::OrSet;
 
 pub type Pid = u32;
 pub type Counter = u64;
@@ -15,15 +17,15 @@ pub struct TestbedConfig {
 
 pub type FromNodeConnection = Framed<
     FramedRead<OwnedReadHalf, LengthDelimitedCodec>,
-    ClusterMessage,
+    ClusterMessage<OrSet<i32>>,
     (),
-    Bincode<ClusterMessage, ()>,
+    Bincode<ClusterMessage<OrSet<i32>>, ()>,
 >;
 pub type ToNodeConnection = Framed<
     FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>,
     (),
-    ClusterMessage,
-    Bincode<(), ClusterMessage>,
+    ClusterMessage<OrSet<i32>>,
+    Bincode<(), ClusterMessage<OrSet<i32>>>,
 >;
 
 pub type RegistrationConnection = Framed<
@@ -54,6 +56,7 @@ pub enum RegistrationMessage {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum ClusterMessage {
-    
+pub enum ClusterMessage<T: DeltaCRDT> {
+    VersionVectorMessage(VersionVector),
+    DeltaMessage(T::Delta),
 }
