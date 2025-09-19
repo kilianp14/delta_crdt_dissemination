@@ -6,5 +6,5 @@ pub type Counter = u64;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TestbedConfig {
     pub server_id: Pid,
-    pub nodes: Vec<Pid>,
+    pub peers: Vec<Pid>,
 }

@@ -23,9 +23,9 @@ async fn main() {
     };
     println!("{server_config:?}");
     //let mut cluster_msg_buf = Vec::with_capacity(NETWORK_BATCH_SIZE);
-    let network = network::Network::new(server_config.server_id, server_config.nodes).await;
     let crdt: OrSet<i32> = OrSet::new(server_config.server_id);
-    let mut node: Node<OrSet<i32>> = Node::new(network, server_config.server_id, crdt);
+    let mut node: Node<OrSet<i32>> =
+        Node::new(server_config.server_id, server_config.peers, crdt).await;
     node.run().await;
 }
 /*
@@ -34,4 +34,3 @@ async fn handle_cluster_messages(cluster_messages: &mut Vec<(Pid, ClusterMessage
         info!("Received message: {:?}", msg);
     }
 }*/
-
