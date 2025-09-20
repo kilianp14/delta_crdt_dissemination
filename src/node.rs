@@ -96,7 +96,6 @@ impl<T: DeltaCRDT> Node<T> {
                 }
                 ClusterMessage::DeltaMessage(delta) => {
                     self.crdt.merge_delta(delta);
-                    self.crdt.get_version_vector_mut().increment(self.pid); // TODO check when we increment the version vector for potential mistakes
                     if self.push {
                         let mut rng = rand::thread_rng();
                         let rand_peer = self.peers.iter().choose(&mut rng).unwrap();
