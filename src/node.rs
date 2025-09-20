@@ -8,7 +8,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 const POLL_TIMEOUT: Duration = Duration::from_millis(100);
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
-const LOG_STATE_TIMEOUT: Duration = Duration::from_secs(5);
+const LOG_STATE_TIMEOUT: Duration = Duration::from_secs(10);
 
 const NETWORK_BATCH_SIZE: usize = 100;
 
@@ -24,10 +24,12 @@ pub struct Node<T: DeltaCRDT> {
     peers: Vec<Pid>,
     incoming_messages: Receiver<(Pid, ClusterMessage<T>)>,
     outgoing_messages: Sender<(Pid, ClusterMessage<T>)>,
+    push: bool,
+    pull: bool,
 }
 
 impl<T: DeltaCRDT> Node<T> {
-    pub async fn new(pid: Pid, peers: Vec<Pid>, crdt: T) -> Self {
+    pub async fn new(pid: Pid, peers: Vec<Pid>, crdt: T, push: bool, pull: bool) -> Self {
         let (incoming_messages, outgoing_messages) =
             launch::<ClusterMessage<T>>(pid, peers.clone()).await;
         Self {
@@ -36,6 +38,8 @@ impl<T: DeltaCRDT> Node<T> {
             peers,
             incoming_messages,
             outgoing_messages,
+            push,
+            pull,
         }
     }
 
@@ -47,7 +51,7 @@ impl<T: DeltaCRDT> Node<T> {
         let mut cluster_msg_buf = Vec::with_capacity(NETWORK_BATCH_SIZE);
         loop {
             tokio::select! {
-                _ = poll_interval.tick() => {
+                _ = poll_interval.tick(), if self.pull => {
                     let rand_peer = self.peers.iter().choose(&mut rng).unwrap();
                     let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::VersionVectorMessage(self.crdt.get_version_vector().clone()))).await;
                 },
@@ -57,6 +61,10 @@ impl<T: DeltaCRDT> Node<T> {
                  _ = update_interval.tick() => {
                     let update = self.crdt.generate_random_update();
                     self.crdt.update(update);
+                    if self.push {
+                        let rand_peer = self.peers.iter().choose(&mut rng).unwrap();
+                        let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::VersionVectorMessage(self.crdt.get_version_vector().clone()))).await;
+                    }
                 },
                 _ = async {
                     self.incoming_messages.recv_many(&mut cluster_msg_buf, NETWORK_BATCH_SIZE).await
@@ -78,10 +86,22 @@ impl<T: DeltaCRDT> Node<T> {
                         let msg = ClusterMessage::DeltaMessage(d.clone());
                         let _ = self.outgoing_messages.send((sender, msg)).await;
                     }
+                    if self.push {
+                        let vv = self.crdt.get_version_vector();
+                        if version_vector.gt(vv) {
+                            let _ = self.outgoing_messages.send((sender,
+                                                                 ClusterMessage::VersionVectorMessage(vv.clone()))).await;
+                        }
+                    }
                 }
                 ClusterMessage::DeltaMessage(delta) => {
                     self.crdt.merge_delta(delta);
-                    self.crdt.get_version_vector_mut().increment(self.pid);
+                    self.crdt.get_version_vector_mut().increment(self.pid); // TODO check when we increment the version vector for potential mistakes
+                    if self.push {
+                        let mut rng = rand::thread_rng();
+                        let rand_peer = self.peers.iter().choose(&mut rng).unwrap();
+                        let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::VersionVectorMessage(self.crdt.get_version_vector().clone()))).await;
+                    }
                 },
             }
         }

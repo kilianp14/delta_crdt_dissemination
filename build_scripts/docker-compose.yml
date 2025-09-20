@@ -1,5 +1,6 @@
 x-common-variables: &common-variables
   RUST_LOG: "debug"
+  DISSEMINATION_STRATEGY: "push-pull"
   CONFIG_FILE: "/etc/testbed/server-config.toml"
 
 services:
