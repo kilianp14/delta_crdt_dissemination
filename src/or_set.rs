@@ -59,6 +59,7 @@ pub enum OrSetUpdate<T: OrSetItem> {
     Remove(T),
 }
 
+#[derive(Debug)]
 pub enum OrSetResponse<T: OrSetItem> {
     Exists(T, bool),
     Members(Vec<T>),
@@ -175,6 +176,11 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
     fn get_version_vector(&self) -> &VersionVector {
         &self.version_vector
     }
+
+    fn get_version_vector_mut(&mut self) -> &mut VersionVector {
+        &mut self.version_vector
+    }
+
     fn generate_random_update(&self) -> Self::Update {
         let mut rng = rand::thread_rng();
         // Random true/false
@@ -191,6 +197,10 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
                 Self::Update::Add(item)
             }
         }
+    }
+
+    fn show_state(&self) {
+        println!("{:?}", self.query(OrSetQuery::Members));
     }
 }
 
