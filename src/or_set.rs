@@ -2,8 +2,8 @@ use crate::{
     crdt::{DeltaCRDT, VersionVector},
     shared::{Counter, Pid},
 };
-use rand::seq::IteratorRandom;
 use rand::Rng;
+use rand::{rngs::ThreadRng, seq::IteratorRandom};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -177,19 +177,13 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
         &self.version_vector
     }
 
-    fn get_version_vector_mut(&mut self) -> &mut VersionVector {
-        &mut self.version_vector
-    }
-
-    fn generate_random_update(&self) -> Self::Update {
-        let mut rng = rand::thread_rng();
-        // Random true/false
+    fn generate_random_update(&self, rng: &mut ThreadRng) -> Self::Update {
         let b: bool = rng.gen();
         if b {
             let item = T::random();
             Self::Update::Add(item)
         } else {
-            let elem = self.adds.iter().choose(&mut rng);
+            let elem = self.adds.iter().choose(rng);
             if let Some((item, _)) = elem {
                 Self::Update::Remove(item.clone())
             } else {

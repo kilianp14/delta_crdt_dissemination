@@ -1,4 +1,5 @@
 use crate::shared::{Counter, Pid};
+use rand::rngs::ThreadRng;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -79,9 +80,7 @@ pub trait DeltaCRDT: Clone + Debug + 'static {
 
     fn get_version_vector(&self) -> &VersionVector;
 
-    fn get_version_vector_mut(&mut self) -> &mut VersionVector;
-
-    fn generate_random_update(&self) -> Self::Update;
+    fn generate_random_update(&self, rng: &mut ThreadRng) -> Self::Update;
 
     fn show_state(&self); //TODO for debugging - may remove later
 }
