@@ -8,8 +8,8 @@ use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 const POLL_TIMEOUT: Duration = Duration::from_millis(100);
-const UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
-const LOG_STATE_TIMEOUT: Duration = Duration::from_secs(10);
+const UPDATE_TIMEOUT: Duration = Duration::from_secs(1);
+const LOG_STATE_TIMEOUT: Duration = Duration::from_secs(5);
 
 const NETWORK_BATCH_SIZE: usize = 100;
 
@@ -32,6 +32,7 @@ pub struct Node<T: DeltaCRDT> {
     outgoing_messages: Sender<(Pid, ClusterMessage<T>)>,
     strategy: DisseminationStrategy,
     rng: ThreadRng,
+    number_of_updates: u64,
 }
 
 impl<T: DeltaCRDT> Node<T> {
@@ -48,6 +49,7 @@ impl<T: DeltaCRDT> Node<T> {
             outgoing_messages,
             strategy,
             rng,
+            number_of_updates: 0,
         }
     }
 
@@ -69,20 +71,23 @@ impl<T: DeltaCRDT> Node<T> {
                     let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
                 },
                  _ = update_interval.tick() => {
-                    let update = self.crdt.generate_random_update(&mut self.rng);
-                    self.version_vector.increment(self.pid);
-                    self.crdt.update(update, (self.pid, self.version_vector.get(&self.pid)));
-                    match self.strategy {
-                        DisseminationStrategy::Proactive => {
-                            for peer in self.peers.iter() {
-                                let _ = self.outgoing_messages.send((*peer, ClusterMessage::Info(self.version_vector.clone()))).await;
+                    if self.number_of_updates < 10 {
+                        self.number_of_updates += 1;
+                        let update = self.crdt.generate_random_update(&mut self.rng);
+                        self.version_vector.increment(self.pid);
+                        self.crdt.update(update, (self.pid, self.version_vector.get(&self.pid)));
+                        match self.strategy {
+                            DisseminationStrategy::Proactive => {
+                                for peer in self.peers.iter() {
+                                    let _ = self.outgoing_messages.send((*peer, ClusterMessage::Info(self.version_vector.clone()))).await;
+                                }
                             }
+                            DisseminationStrategy::Hybrid => {
+                                let rand_peer = self.peers.iter().choose(&mut self.rng).unwrap();
+                                let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
+                            }
+                            _ => {}
                         }
-                        DisseminationStrategy::Hybrid => {
-                            let rand_peer = self.peers.iter().choose(&mut self.rng).unwrap();
-                            let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
-                        }
-                        _ => {}
                     }
                 },
                 _ = async {
@@ -91,6 +96,7 @@ impl<T: DeltaCRDT> Node<T> {
                     self.handle_cluster_messages(&mut cluster_msg_buf).await;
                 },
                 _ = log_state_interval.tick() => {
+                    println!("{:?}", self.version_vector);
                     let test = self.crdt.show_state();
                 },
             }
