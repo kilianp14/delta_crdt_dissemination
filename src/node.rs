@@ -16,16 +16,17 @@ const NETWORK_BATCH_SIZE: usize = 100;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ClusterMessage<T: DeltaCRDT> {
     // Informs about new update
-    InfoMessage(VersionVector),
+    Info(VersionVector),
     // Requests delta to sync
-    DeltaRequestMessage(VersionVector),
+    DeltaRequest(VersionVector),
     // Returns delta with optional vv for two-way-sync
-    DeltaMessage(T::Delta, Option<VersionVector>),
+    Delta(T::Delta, VersionVector),
 }
 
 pub struct Node<T: DeltaCRDT> {
     pid: Pid,
     crdt: T,
+    version_vector: VersionVector,
     peers: Vec<Pid>,
     incoming_messages: Receiver<(Pid, ClusterMessage<T>)>,
     outgoing_messages: Sender<(Pid, ClusterMessage<T>)>,
@@ -42,6 +43,7 @@ impl<T: DeltaCRDT> Node<T> {
             pid,
             crdt,
             peers,
+            version_vector: VersionVector::new(),
             incoming_messages,
             outgoing_messages,
             strategy,
@@ -64,20 +66,21 @@ impl<T: DeltaCRDT> Node<T> {
             tokio::select! {
                 _ = poll_interval.tick(), if is_pull => {
                     let rand_peer = self.peers.iter().choose(&mut self.rng).unwrap();
-                    let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::DeltaRequestMessage(self.crdt.get_version_vector().clone()))).await;
+                    let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
                 },
                  _ = update_interval.tick() => {
                     let update = self.crdt.generate_random_update(&mut self.rng);
-                    self.crdt.update(update);
+                    self.version_vector.increment(self.pid);
+                    self.crdt.update(update, (self.pid, self.version_vector.get(&self.pid)));
                     match self.strategy {
                         DisseminationStrategy::Proactive => {
                             for peer in self.peers.iter() {
-                                let _ = self.outgoing_messages.send((*peer, ClusterMessage::InfoMessage(self.crdt.get_version_vector().clone()))).await;
+                                let _ = self.outgoing_messages.send((*peer, ClusterMessage::Info(self.version_vector.clone()))).await;
                             }
                         }
                         DisseminationStrategy::Hybrid => {
                             let rand_peer = self.peers.iter().choose(&mut self.rng).unwrap();
-                            let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::InfoMessage(self.crdt.get_version_vector().clone()))).await;
+                            let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
                         }
                         _ => {}
                     }
@@ -100,45 +103,42 @@ impl<T: DeltaCRDT> Node<T> {
     ) {
         for (sender, msg) in cluster_messages.drain(..) {
             match msg {
-                ClusterMessage::InfoMessage(version_vector) => {
-                    if matches!(
-                        self.strategy,
-                        DisseminationStrategy::Proactive | DisseminationStrategy::Hybrid
-                    ) {
-                        let vv = self.crdt.get_version_vector();
-                        if !(&version_vector < vv) {
-                            let _ = self
-                                .outgoing_messages
-                                .send((sender, ClusterMessage::DeltaRequestMessage(vv.clone())));
-                        }
+                ClusterMessage::Info(version_vector) => {
+                    if matches!(self.strategy, DisseminationStrategy::Proactive)
+                        && !(version_vector < self.version_vector)
+                    {
+                        let _ = self
+                            .outgoing_messages
+                            .send((sender, ClusterMessage::DeltaRequest(version_vector)))
+                            .await;
                     }
                 }
-                ClusterMessage::DeltaRequestMessage(version_vector) => {
-                    if let Some(delta) = self.crdt.get_delta(&version_vector) {
-                        let return_vv: Option<VersionVector> =
-                            if matches!(self.strategy, DisseminationStrategy::Hybrid) {
-                                Some(self.crdt.get_version_vector().clone())
-                            } else {
-                                None
-                            };
-                        let msg = ClusterMessage::DeltaMessage(delta.clone(), return_vv);
+                ClusterMessage::DeltaRequest(version_vector) => {
+                    if !(version_vector < self.version_vector) {
+                        let delta = self.crdt.get_delta(&version_vector);
+                        let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
                         let _ = self.outgoing_messages.send((sender, msg)).await;
                     }
                 }
-                ClusterMessage::DeltaMessage(delta, version_vector) => {
-                    self.crdt.merge_delta(delta);
-                    if let Some(vv) = version_vector {
-                        if let Some(ret_delta) = self.crdt.get_delta(&vv) {
-                            let msg = ClusterMessage::DeltaMessage(ret_delta.clone(), None);
-                            let _ = self.outgoing_messages.send((sender, msg));
-                        }
-                    }
-                    if matches!(self.strategy, DisseminationStrategy::Proactive) {
-                        for peer in self.peers.iter() {
-                            let _ = self.outgoing_messages.send((
-                                *peer,
-                                ClusterMessage::InfoMessage(self.crdt.get_version_vector().clone()),
-                            ));
+                ClusterMessage::Delta(delta, version_vector) => {
+                    if !(version_vector < self.version_vector) {
+                        self.crdt.merge_delta(delta);
+                        self.version_vector.merge(&version_vector);
+                        match self.strategy {
+                            DisseminationStrategy::Proactive => {
+                                for peer in self.peers.iter() {
+                                    if *peer != sender {
+                                        let msg = ClusterMessage::Info(self.version_vector.clone());
+                                        let _ = self.outgoing_messages.send((*peer, msg)).await;
+                                    }
+                                }
+                            }
+                            DisseminationStrategy::Hybrid => {
+                                let delta = self.crdt.get_delta(&version_vector);
+                                let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
+                                let _ = self.outgoing_messages.send((sender, msg)).await;
+                            }
+                            _ => {}
                         }
                     }
                 }

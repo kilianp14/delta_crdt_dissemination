@@ -46,7 +46,6 @@ pub struct OrSet<T: OrSetItem> {
     pid: Pid,
     adds: HashMap<T, HashSet<(Pid, Counter)>>,
     tombstones: HashSet<(Pid, Counter)>,
-    version_vector: VersionVector,
 }
 
 pub enum OrSetQuery<T: OrSetItem> {
@@ -70,7 +69,6 @@ pub struct OrSetDelta<T: OrSetItem> {
     #[serde(bound = "")]
     adds: HashMap<T, HashSet<(Pid, Counter)>>,
     tombstones: HashSet<(Pid, Counter)>,
-    version_vector: VersionVector,
 }
 
 impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
@@ -106,13 +104,9 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
         }
     }
 
-    fn update(&mut self, update: Self::Update) {
+    fn update(&mut self, update: Self::Update, tag: (Pid, Counter)) {
         match update {
             OrSetUpdate::Add(item) => {
-                self.version_vector.increment(self.pid);
-                let counter = self.version_vector.get(&self.pid);
-                let tag = (self.pid, counter);
-
                 self.adds.entry(item).or_default().insert(tag);
             }
             OrSetUpdate::Remove(item) => {
@@ -125,12 +119,7 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
         }
     }
 
-    fn get_delta(&self, version_vector: &VersionVector) -> Option<Self::Delta> {
-        // Everything is up-to-date
-        if version_vector >= &self.version_vector {
-            return None;
-        }
-
+    fn get_delta(&self, version_vector: &VersionVector) -> Self::Delta {
         let mut delta_adds: HashMap<T, HashSet<(Pid, Counter)>> = HashMap::new();
         let mut delta_tombstones = HashSet::new();
 
@@ -153,11 +142,10 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
             }
         }
 
-        Some(OrSetDelta {
+        OrSetDelta {
             adds: delta_adds,
             tombstones: delta_tombstones,
-            version_vector: self.version_vector.clone(),
-        })
+        }
     }
 
     fn merge_delta(&mut self, delta: Self::Delta) {
@@ -168,13 +156,6 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
 
         // Merge tombstones
         self.tombstones.extend(delta.tombstones);
-
-        // Merge version vectors
-        self.version_vector.merge(&delta.version_vector);
-    }
-
-    fn get_version_vector(&self) -> &VersionVector {
-        &self.version_vector
     }
 
     fn generate_random_update(&self, rng: &mut ThreadRng) -> Self::Update {
@@ -204,7 +185,6 @@ impl<T: OrSetItem> OrSet<T> {
             pid,
             adds: HashMap::new(),
             tombstones: HashSet::new(),
-            version_vector: VersionVector::new(),
         }
     }
 }
