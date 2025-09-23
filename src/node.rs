@@ -120,7 +120,7 @@ impl<T: DeltaCRDT> Node<T> {
                     }
                 }
                 ClusterMessage::DeltaRequest(version_vector) => {
-                    if !(version_vector < self.version_vector) {
+                    if !(self.version_vector < version_vector) {
                         let delta = self.crdt.get_delta(&version_vector);
                         let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
                         let _ = self.outgoing_messages.send((sender, msg)).await;
