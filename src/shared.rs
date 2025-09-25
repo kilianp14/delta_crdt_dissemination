@@ -12,7 +12,7 @@ pub type Counter = u64;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NetworkConfig {
-    pub servers: std::collections::HashMap<Pid, Vec<Pid>>,
+    pub servers: std::collections::HashMap<String, Vec<Pid>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -29,7 +29,7 @@ impl FromStr for DisseminationStrategy {
         match s.to_lowercase().as_str() {
             "push" => Ok(DisseminationStrategy::Proactive),
             "pull" => Ok(DisseminationStrategy::Reactive),
-            "push-pull" => Ok(DisseminationStrategy::Hybrid),
+            "pushpull" => Ok(DisseminationStrategy::Hybrid),
             other => Err(format!("Unknown Dissemination Strategy: {}", other)),
         }
     }

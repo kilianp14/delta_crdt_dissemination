@@ -1,9 +1,9 @@
 x-common-variables: &common-variables
   RUST_LOG: "${RUST_LOG:-info}"
-  DISSEMINATION_STRATEGY: "${DISSEMINATION_STRATEGY:-push_pull}"
+  DISSEMINATION_STRATEGY: "${DISSEMINATION_STRATEGY:-pushpull}"
   UPDATE_INTERVAL: "${UPDATE_INTERVAL:-1000}"
-  CONFIG_FILE: "/etc/testbed/network-config.toml"
-  DATA_DIR: "/var/log/testbed"
+  CONFIG_FILE: "/app/network-config.toml"
+  DATA_DIR: "./log/"
 
 services:
   s0:
@@ -14,9 +14,10 @@ services:
     container_name: s0
     environment:
       <<: *common-variables
+      SERVER_ID: 0
     volumes:
-      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
-      - ./benchmarks/logs/${DATA_DIR}/s0:/var/log/testbed
+      - ./networks/${CONFIG_FILE}:/app/network-config.toml
+      - ./benchmarks/${DATA_DIR}/s0:/app/log
     networks:
       - servers-network
     ports:
@@ -29,9 +30,10 @@ services:
     container_name: s1
     environment:
       <<: *common-variables
+      SERVER_ID: 1
     volumes:
-      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
-      - ./benchmarks/logs/${DATA_DIR}/s1:/var/log/testbed
+      - ./networks/${CONFIG_FILE}:/app/network-config.toml
+      - ./benchmarks/${DATA_DIR}/s1:/app/log
     networks:
       - servers-network
     ports:
@@ -44,9 +46,10 @@ services:
     container_name: s2
     environment:
       <<: *common-variables
+      SERVER_ID: 2
     volumes:
-      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
-      - ./benchmarks/logs/${DATA_DIR}/s2:/var/log/testbed
+      - ./networks/${CONFIG_FILE}:/app/network-config.toml
+      - ./benchmarks/${DATA_DIR}/s2:/app/log
     networks:
       - servers-network
     ports:
@@ -59,9 +62,10 @@ services:
     container_name: s3
     environment:
       <<: *common-variables
+      SERVER_ID: 3
     volumes:
-      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
-      - ./benchmarks/logs/${DATA_DIR}/s3:/var/log/testbed
+      - ./networks/${CONFIG_FILE}:/app/network-config.toml
+      - ./benchmarks/${DATA_DIR}/s3:/app/log
     networks:
       - servers-network
     ports:
@@ -74,9 +78,10 @@ services:
     container_name: s4
     environment:
       <<: *common-variables
+      SERVER_ID: 4
     volumes:
-      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
-      - ./benchmarks/logs/${DATA_DIR}/s4:/var/log/testbed
+      - ./networks/${CONFIG_FILE}:/app/network-config.toml
+      - ./benchmarks/${DATA_DIR}/s4:/app/log
     networks:
       - servers-network
     ports:
@@ -89,9 +94,10 @@ services:
     container_name: s5
     environment:
       <<: *common-variables
+      SERVER_ID: 5
     volumes:
-      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
-      - ./benchmarks/logs/${DATA_DIR}/s5:/var/log/testbed
+      - ./networks/${CONFIG_FILE}:/app/network-config.toml
+      - ./benchmarks/${DATA_DIR}/s5:/app/log
     networks:
       - servers-network
     ports:
@@ -104,9 +110,10 @@ services:
     container_name: s6
     environment:
       <<: *common-variables
+      SERVER_ID: 6
     volumes:
-      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
-      - ./benchmarks/logs/${DATA_DIR}/s6:/var/log/testbed
+      - ./networks/${CONFIG_FILE}:/app/network-config.toml
+      - ./benchmarks/${DATA_DIR}/s6:/app/log
     networks:
       - servers-network
     ports:
@@ -119,9 +126,10 @@ services:
     container_name: s7
     environment:
       <<: *common-variables
+      SERVER_ID: 7
     volumes:
-      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
-      - ./benchmarks/logs/${DATA_DIR}/s7:/var/log/testbed
+      - ./networks/${CONFIG_FILE}:/app/network-config.toml
+      - ./benchmarks/${DATA_DIR}/s7:/app/log
     networks:
       - servers-network
     ports:
@@ -134,9 +142,10 @@ services:
     container_name: s8
     environment:
       <<: *common-variables
+      SERVER_ID: 8
     volumes:
-      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
-      - ./benchmarks/logs/${DATA_DIR}/s8:/var/log/testbed
+      - ./networks/${CONFIG_FILE}:/app/network-config.toml
+      - ./benchmarks/${DATA_DIR}/s8:/app/log
     networks:
       - servers-network
     ports:
@@ -149,9 +158,10 @@ services:
     container_name: s9
     environment:
       <<: *common-variables
+      SERVER_ID: 9
     volumes:
-      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
-      - ./benchmarks/logs/${DATA_DIR}/s9:/var/log/testbed
+      - ./networks/${CONFIG_FILE}:/app/network-config.toml
+      - ./benchmarks/${DATA_DIR}/s9:/app/log
     networks:
       - servers-network
     ports:

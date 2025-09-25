@@ -31,18 +31,16 @@ async fn main() {
         .expect("Missing UPDATE_INTERVAL")
         .parse::<u64>()
         .expect("UPDATE_INTERVAL must be valid");
-    let pid: Pid = env::var("PID")
-        .expect("Missing SERVER_ID")
-        .parse::<Pid>()
-        .expect("SERVER_ID must be valid");
+    let pid_string = env::var("SERVER_ID").expect("Missing SERVER_ID");
     let config_string = fs::read_to_string(config_file).unwrap();
     let server_config: NetworkConfig = toml::from_str(&config_string).unwrap();
 
     let peers = server_config
         .servers
-        .get(&pid)
+        .get(&pid_string)
         .ok_or("Invalid pid")
         .unwrap();
+    let pid: Pid = pid_string.parse().unwrap();
     let crdt: OrSet<i32> = OrSet::new(pid);
     let mut node: Node<OrSet<i32>> = Node::new(
         pid,

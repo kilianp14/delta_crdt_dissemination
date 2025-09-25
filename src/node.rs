@@ -3,6 +3,7 @@ use crate::{
     network,
     shared::{now_micros, DisseminationStrategy, JitteredInterval, Pid},
 };
+use csv::Writer;
 use rand::{rngs::ThreadRng, seq::IteratorRandom};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
@@ -30,7 +31,8 @@ pub struct Node<T: DeltaCRDT> {
     crdt: T,
     version_vector: VersionVector,
     peers: Vec<Pid>,
-    incoming_messages: Receiver<(Pid, ClusterMessage<T>)>,
+    // Sender id, message, message size in bytes
+    incoming_messages: Receiver<(Pid, ClusterMessage<T>, usize)>,
     outgoing_messages: Sender<(Pid, ClusterMessage<T>)>,
     strategy: DisseminationStrategy,
     rng: ThreadRng,
@@ -38,7 +40,8 @@ pub struct Node<T: DeltaCRDT> {
     update_interval: Duration,
     get_delta_times: Vec<u128>,
     merge_delta_times: Vec<u128>,
-    //received_message_sizes:
+    received_message_sizes: Vec<usize>,
+    version_vector_states: Vec<(u128, VersionVector)>,
     data_dir: PathBuf,
 }
 
@@ -67,6 +70,8 @@ impl<T: DeltaCRDT> Node<T> {
             update_interval,
             get_delta_times: Vec::with_capacity(1000),
             merge_delta_times: Vec::with_capacity(1000),
+            received_message_sizes: Vec::with_capacity(10000),
+            version_vector_states: Vec::with_capacity(1000),
             data_dir,
         }
     }
@@ -107,6 +112,7 @@ impl<T: DeltaCRDT> Node<T> {
                         }
                         _ => {}
                     }
+                    self.version_vector_states.push((now_micros(), self.version_vector.clone()));
                 },
                 _ = async {
                     self.incoming_messages.recv_many(&mut cluster_msg_buf, NETWORK_BATCH_SIZE).await
@@ -129,65 +135,118 @@ impl<T: DeltaCRDT> Node<T> {
                 },
             }
         }
-        println!("{:?}", self.version_vector);
-        let test = self.crdt.show_state();
+        self.save_metrics().await.expect("Saving metrics failed");
     }
 
     async fn handle_cluster_messages(
         &mut self,
-        cluster_messages: &mut Vec<(Pid, ClusterMessage<T>)>,
+        cluster_messages: &mut Vec<(Pid, ClusterMessage<T>, usize)>,
     ) {
-        for (sender, msg) in cluster_messages.drain(..) {
+        for (sender, msg, msg_size) in cluster_messages.drain(..) {
+            self.received_message_sizes.push(msg_size);
             match msg {
                 ClusterMessage::Info(version_vector) => {
-                    if matches!(self.strategy, DisseminationStrategy::Proactive)
-                        && !(version_vector <= self.version_vector)
-                    {
-                        let _ = self
-                            .outgoing_messages
-                            .send((sender, ClusterMessage::DeltaRequest(version_vector)))
-                            .await;
+                    if !matches!(self.strategy, DisseminationStrategy::Proactive) {
+                        continue;
                     }
+                    if version_vector <= self.version_vector {
+                        continue;
+                    }
+
+                    let _ = self
+                        .outgoing_messages
+                        .send((sender, ClusterMessage::DeltaRequest(version_vector)))
+                        .await;
                 }
+
                 ClusterMessage::DeltaRequest(version_vector) => {
-                    if !(version_vector >= self.version_vector) {
-                        let start = now_micros();
-                        let delta = self.crdt.get_delta(&version_vector);
-                        let end = now_micros();
-                        self.get_delta_times.push(end - start);
-                        let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
-                        let _ = self.outgoing_messages.send((sender, msg)).await;
+                    if version_vector >= self.version_vector {
+                        continue;
                     }
+
+                    let start = now_micros();
+                    let delta = self.crdt.get_delta(&version_vector);
+                    let end = now_micros();
+                    self.get_delta_times.push(end - start);
+
+                    let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
+                    let _ = self.outgoing_messages.send((sender, msg)).await;
                 }
+
                 ClusterMessage::Delta(delta, version_vector) => {
-                    if !(version_vector <= self.version_vector) {
-                        let start = now_micros();
-                        self.crdt.merge_delta(delta);
-                        let end = now_micros();
-                        self.merge_delta_times.push(end - start);
-                        self.version_vector.merge(&version_vector);
-                        match self.strategy {
-                            DisseminationStrategy::Proactive => {
-                                for peer in self.peers.iter() {
-                                    if *peer != sender {
-                                        let msg = ClusterMessage::Info(self.version_vector.clone());
-                                        let _ = self.outgoing_messages.send((*peer, msg)).await;
-                                    }
+                    if version_vector <= self.version_vector {
+                        continue;
+                    }
+
+                    let start = now_micros();
+                    self.crdt.merge_delta(delta);
+                    let end = now_micros();
+                    self.merge_delta_times.push(end - start);
+
+                    self.version_vector.merge(&version_vector);
+
+                    match self.strategy {
+                        DisseminationStrategy::Proactive => {
+                            for peer in self.peers.iter() {
+                                if *peer != sender {
+                                    let msg = ClusterMessage::Info(self.version_vector.clone());
+                                    let _ = self.outgoing_messages.send((*peer, msg)).await;
                                 }
                             }
-                            DisseminationStrategy::Hybrid => {
-                                let start = now_micros();
-                                let delta = self.crdt.get_delta(&version_vector);
-                                let end = now_micros();
-                                self.get_delta_times.push(end - start);
-                                let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
-                                let _ = self.outgoing_messages.send((sender, msg)).await;
-                            }
-                            _ => {}
                         }
+                        DisseminationStrategy::Hybrid => {
+                            let start = now_micros();
+                            let delta = self.crdt.get_delta(&version_vector);
+                            let end = now_micros();
+                            self.get_delta_times.push(end - start);
+
+                            let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
+                            let _ = self.outgoing_messages.send((sender, msg)).await;
+                        }
+                        _ => {}
                     }
+
+                    self.version_vector_states
+                        .push((now_micros(), self.version_vector.clone()));
                 }
             }
         }
+    }
+
+    async fn save_metrics(&self) -> std::io::Result<()> {
+        // Save get_delta_times
+        let mut wtr = Writer::from_path(self.data_dir.join("get_delta_times.csv"))?;
+        wtr.write_record(["time_micros"])?;
+        for t in &self.get_delta_times {
+            wtr.write_record(&[t.to_string()])?;
+        }
+        wtr.flush()?;
+
+        // Save merge_delta_times
+        let mut wtr = Writer::from_path(self.data_dir.join("merge_delta_times.csv"))?;
+        wtr.write_record(["time_micros"])?;
+        for t in &self.merge_delta_times {
+            wtr.write_record(&[t.to_string()])?;
+        }
+        wtr.flush()?;
+
+        // Save received_message_sizes
+        let mut wtr = Writer::from_path(self.data_dir.join("received_message_sizes.csv"))?;
+        wtr.write_record(["size_bytes"])?;
+        for s in &self.received_message_sizes {
+            wtr.write_record(&[s.to_string()])?;
+        }
+        wtr.flush()?;
+
+        // Save version_vector_states
+        let mut wtr = Writer::from_path(self.data_dir.join("version_vector_states.csv"))?;
+        // Assuming VersionVector implements Display or Debug
+        wtr.write_record(&["timestamp_micros", "version_vector"])?;
+        for (ts, vv) in &self.version_vector_states {
+            wtr.write_record(&[ts.to_string(), format!("{:?}", vv)])?;
+        }
+        wtr.flush()?;
+
+        Ok(())
     }
 }
