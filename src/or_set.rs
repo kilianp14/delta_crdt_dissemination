@@ -2,8 +2,8 @@ use crate::{
     crdt::{DeltaCRDT, VersionVector},
     shared::{Counter, Pid},
 };
-use rand::seq::IteratorRandom;
 use rand::Rng;
+use rand::{rngs::ThreadRng, seq::IteratorRandom};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -41,12 +41,12 @@ impl<
 {
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OrSet<T: OrSetItem> {
     pid: Pid,
     adds: HashMap<T, HashSet<(Pid, Counter)>>,
-    tombstones: HashSet<(Pid, Counter)>,
-    version_vector: VersionVector,
+    #[serde(with = "tuple_key_map")]
+    tombstones: HashMap<(Pid, Counter), (Pid, Counter)>,
 }
 
 pub enum OrSetQuery<T: OrSetItem> {
@@ -69,8 +69,8 @@ pub enum OrSetResponse<T: OrSetItem> {
 pub struct OrSetDelta<T: OrSetItem> {
     #[serde(bound = "")]
     adds: HashMap<T, HashSet<(Pid, Counter)>>,
-    tombstones: HashSet<(Pid, Counter)>,
-    version_vector: VersionVector,
+    #[serde(with = "tuple_key_map")]
+    tombstones: HashMap<(Pid, Counter), (Pid, Counter)>,
 }
 
 impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
@@ -85,7 +85,7 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
                 let exists = self
                     .adds
                     .get(&item)
-                    .map(|tags| !tags.is_subset(&self.tombstones))
+                    .map(|tags| tags.iter().any(|tag| !&self.tombstones.contains_key(tag)))
                     .unwrap_or(false);
                 OrSetResponse::Exists(item, exists)
             }
@@ -94,7 +94,7 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
                     .adds
                     .iter()
                     .filter_map(|(item, tags)| {
-                        if !tags.is_subset(&self.tombstones) {
+                        if tags.iter().any(|tag| !self.tombstones.contains_key(tag)) {
                             Some(item.clone())
                         } else {
                             None
@@ -106,33 +106,24 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
         }
     }
 
-    fn update(&mut self, update: Self::Update) {
+    fn update(&mut self, update: Self::Update, tag: (Pid, Counter)) {
         match update {
             OrSetUpdate::Add(item) => {
-                self.version_vector.increment(self.pid);
-                let counter = self.version_vector.get(&self.pid);
-                let tag = (self.pid, counter);
-
                 self.adds.entry(item).or_default().insert(tag);
             }
             OrSetUpdate::Remove(item) => {
                 if let Some(tags) = self.adds.get(&item) {
-                    for tag in tags {
-                        self.tombstones.insert(*tag);
+                    for tag_to_remove in tags {
+                        self.tombstones.entry(*tag_to_remove).or_insert(tag);
                     }
                 }
             }
         }
     }
 
-    fn get_delta(&self, version_vector: &VersionVector) -> Option<Self::Delta> {
-        // Everything is up-to-date
-        if version_vector >= &self.version_vector {
-            return None;
-        }
-
+    fn get_delta(&self, version_vector: &VersionVector) -> Self::Delta {
         let mut delta_adds: HashMap<T, HashSet<(Pid, Counter)>> = HashMap::new();
-        let mut delta_tombstones = HashSet::new();
+        let mut delta_tombstones = HashMap::new();
 
         // Collect new adds
         for (item, tags) in &self.adds {
@@ -147,17 +138,17 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
         }
 
         // Collect new tombstones
-        for (pid, counter) in &self.tombstones {
+        for (item_to_remove, removal_timestamp) in &self.tombstones {
+            let (pid, counter) = removal_timestamp;
             if *counter > version_vector.get(pid) {
-                delta_tombstones.insert((*pid, *counter));
+                delta_tombstones.insert(*item_to_remove, *removal_timestamp);
             }
         }
 
-        Some(OrSetDelta {
+        OrSetDelta {
             adds: delta_adds,
             tombstones: delta_tombstones,
-            version_vector: self.version_vector.clone(),
-        })
+        }
     }
 
     fn merge_delta(&mut self, delta: Self::Delta) {
@@ -168,28 +159,15 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
 
         // Merge tombstones
         self.tombstones.extend(delta.tombstones);
-
-        // Merge version vectors
-        self.version_vector.merge(&delta.version_vector);
     }
 
-    fn get_version_vector(&self) -> &VersionVector {
-        &self.version_vector
-    }
-
-    fn get_version_vector_mut(&mut self) -> &mut VersionVector {
-        &mut self.version_vector
-    }
-
-    fn generate_random_update(&self) -> Self::Update {
-        let mut rng = rand::thread_rng();
-        // Random true/false
+    fn generate_random_update(&self, rng: &mut ThreadRng) -> Self::Update {
         let b: bool = rng.gen();
         if b {
             let item = T::random();
             Self::Update::Add(item)
         } else {
-            let elem = self.adds.iter().choose(&mut rng);
+            let elem = self.adds.iter().choose(rng);
             if let Some((item, _)) = elem {
                 Self::Update::Remove(item.clone())
             } else {
@@ -200,6 +178,7 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
     }
 
     fn show_state(&self) {
+        println!("adds: {:?}, tombstones: {:?}", self.adds, self.tombstones);
         println!("{:?}", self.query(OrSetQuery::Members));
     }
 }
@@ -209,8 +188,51 @@ impl<T: OrSetItem> OrSet<T> {
         Self {
             pid,
             adds: HashMap::new(),
-            tombstones: HashSet::new(),
-            version_vector: VersionVector::new(),
+            tombstones: HashMap::new(),
         }
+    }
+}
+
+
+mod tuple_key_map {
+    use std::collections::HashMap;
+    use super::*;
+    use serde::{Serializer, Deserializer};
+    use serde::de::Error;
+
+    pub fn serialize<S>(
+        map: &HashMap<(Pid, Counter), (Pid, Counter)>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let converted: HashMap<String, &(Pid, Counter)> = map
+            .iter()
+            .map(|((pid, counter), value)| {
+                (format!("{}:{}", pid, counter), value)
+            })
+            .collect();
+        converted.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<HashMap<(Pid, Counter), (Pid, Counter)>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw: HashMap<String, (Pid, Counter)> = HashMap::deserialize(deserializer)?;
+        raw.into_iter()
+            .map(|(k, v)| {
+                let mut parts = k.splitn(2, ':');
+                let pid = parts.next().ok_or_else(|| D::Error::custom("missing pid"))?;
+                let counter = parts.next().ok_or_else(|| D::Error::custom("missing counter"))?
+                    .parse::<Counter>()
+                    .map_err(D::Error::custom)?;
+                let pid_val: Pid = pid.parse().map_err(D::Error::custom)?;
+                Ok(((pid_val, counter), v))
+            })
+            .collect()
     }
 }

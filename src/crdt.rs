@@ -1,4 +1,5 @@
 use crate::shared::{Counter, Pid};
+use rand::rngs::ThreadRng;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -69,19 +70,15 @@ pub trait DeltaCRDT: Clone + Debug + 'static {
     fn query(&self, query: Self::Query) -> Self::Response;
 
     /// Mutates the state, records the delta and returns the client response
-    fn update(&mut self, update: Self::Update);
+    fn update(&mut self, update: Self::Update, tag: (Pid, Counter));
 
     /// Returns the deltas between the current state and the state represented by the given version vector
-    fn get_delta(&self, version_vector: &VersionVector) -> Option<Self::Delta>;
+    fn get_delta(&self, version_vector: &VersionVector) -> Self::Delta;
 
     /// Applies the remote delta to the local state
     fn merge_delta(&mut self, delta: Self::Delta);
 
-    fn get_version_vector(&self) -> &VersionVector;
-
-    fn get_version_vector_mut(&mut self) -> &mut VersionVector;
-
-    fn generate_random_update(&self) -> Self::Update;
+    fn generate_random_update(&self, rng: &mut ThreadRng) -> Self::Update;
 
     fn show_state(&self); //TODO for debugging - may remove later
 }
