@@ -1,17 +1,18 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::{
+    env,
+    path::{Path, PathBuf},
     str::FromStr,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 pub type Pid = u32;
 pub type Counter = u64;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TestbedConfig {
-    pub server_id: Pid,
-    pub peers: Vec<Pid>,
+pub struct NetworkConfig {
+    pub servers: std::collections::HashMap<Pid, Vec<Pid>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -66,4 +67,20 @@ impl JitteredInterval {
         self.next_elapse = now + self.base_interval + jitter;
         now
     }
+}
+
+pub fn to_absolute<P: AsRef<Path>>(input: P) -> PathBuf {
+    let path = input.as_ref();
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir().unwrap().join(path)
+    }
+}
+
+pub fn now_micros() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_micros()
 }

@@ -1,18 +1,17 @@
 use crate::{
     crdt::{DeltaCRDT, VersionVector},
     network,
-    shared::{DisseminationStrategy, JitteredInterval, Pid},
+    shared::{now_micros, DisseminationStrategy, JitteredInterval, Pid},
 };
 use rand::{rngs::ThreadRng, seq::IteratorRandom};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     time::sleep,
 };
 
-const POLL_TIMEOUT: Duration = Duration::from_millis(100);
-const UPDATE_TIMEOUT: Duration = Duration::from_secs(1);
+const POLL_TIMEOUT: Duration = Duration::from_secs(1);
 const NUMBER_OF_UPDATES: u64 = 10;
 const NETWORK_BATCH_SIZE: usize = 100;
 
@@ -36,10 +35,22 @@ pub struct Node<T: DeltaCRDT> {
     strategy: DisseminationStrategy,
     rng: ThreadRng,
     number_of_updates: u64,
+    update_interval: Duration,
+    get_delta_times: Vec<u128>,
+    merge_delta_times: Vec<u128>,
+    //received_message_sizes:
+    data_dir: PathBuf,
 }
 
 impl<T: DeltaCRDT> Node<T> {
-    pub async fn new(pid: Pid, peers: Vec<Pid>, crdt: T, strategy: DisseminationStrategy) -> Self {
+    pub async fn new(
+        pid: Pid,
+        peers: Vec<Pid>,
+        crdt: T,
+        strategy: DisseminationStrategy,
+        update_interval: Duration,
+        data_dir: PathBuf,
+    ) -> Self {
         let (incoming_messages, outgoing_messages) =
             network::launch::<ClusterMessage<T>>(pid, peers.clone()).await;
         let rng = rand::thread_rng();
@@ -53,6 +64,10 @@ impl<T: DeltaCRDT> Node<T> {
             strategy,
             rng,
             number_of_updates: 0,
+            update_interval,
+            get_delta_times: Vec::with_capacity(1000),
+            merge_delta_times: Vec::with_capacity(1000),
+            data_dir,
         }
     }
 
@@ -63,7 +78,7 @@ impl<T: DeltaCRDT> Node<T> {
         );
 
         let mut poll_interval = JitteredInterval::new(POLL_TIMEOUT, POLL_TIMEOUT);
-        let mut update_interval = JitteredInterval::new(UPDATE_TIMEOUT, UPDATE_TIMEOUT);
+        let mut update_interval = JitteredInterval::new(self.update_interval, self.update_interval);
 
         let mut cluster_msg_buf = Vec::with_capacity(NETWORK_BATCH_SIZE);
         loop {
@@ -136,14 +151,20 @@ impl<T: DeltaCRDT> Node<T> {
                 }
                 ClusterMessage::DeltaRequest(version_vector) => {
                     if !(version_vector >= self.version_vector) {
+                        let start = now_micros();
                         let delta = self.crdt.get_delta(&version_vector);
+                        let end = now_micros();
+                        self.get_delta_times.push(end - start);
                         let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
                         let _ = self.outgoing_messages.send((sender, msg)).await;
                     }
                 }
                 ClusterMessage::Delta(delta, version_vector) => {
                     if !(version_vector <= self.version_vector) {
+                        let start = now_micros();
                         self.crdt.merge_delta(delta);
+                        let end = now_micros();
+                        self.merge_delta_times.push(end - start);
                         self.version_vector.merge(&version_vector);
                         match self.strategy {
                             DisseminationStrategy::Proactive => {
@@ -155,7 +176,10 @@ impl<T: DeltaCRDT> Node<T> {
                                 }
                             }
                             DisseminationStrategy::Hybrid => {
+                                let start = now_micros();
                                 let delta = self.crdt.get_delta(&version_vector);
+                                let end = now_micros();
+                                self.get_delta_times.push(end - start);
                                 let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
                                 let _ = self.outgoing_messages.send((sender, msg)).await;
                             }

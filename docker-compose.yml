@@ -1,0 +1,162 @@
+x-common-variables: &common-variables
+  RUST_LOG: "${RUST_LOG:-info}"
+  DISSEMINATION_STRATEGY: "${DISSEMINATION_STRATEGY:-push_pull}"
+  UPDATE_INTERVAL: "${UPDATE_INTERVAL:-1000}"
+  CONFIG_FILE: "/etc/testbed/network-config.toml"
+  DATA_DIR: "/var/log/testbed"
+
+services:
+  s0:
+    image: crdt-testbed
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: s0
+    environment:
+      <<: *common-variables
+    volumes:
+      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
+      - ./benchmarks/logs/${DATA_DIR}/s0:/var/log/testbed
+    networks:
+      - servers-network
+    ports:
+      - "8000:8000"
+  s1:
+    image: crdt-testbed
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: s1
+    environment:
+      <<: *common-variables
+    volumes:
+      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
+      - ./benchmarks/logs/${DATA_DIR}/s1:/var/log/testbed
+    networks:
+      - servers-network
+    ports:
+      - "8001:8001"
+  s2:
+    image: crdt-testbed
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: s2
+    environment:
+      <<: *common-variables
+    volumes:
+      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
+      - ./benchmarks/logs/${DATA_DIR}/s2:/var/log/testbed
+    networks:
+      - servers-network
+    ports:
+      - "8002:8002"
+  s3:
+    image: crdt-testbed
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: s3
+    environment:
+      <<: *common-variables
+    volumes:
+      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
+      - ./benchmarks/logs/${DATA_DIR}/s3:/var/log/testbed
+    networks:
+      - servers-network
+    ports:
+      - "8003:8003"
+  s4:
+    image: crdt-testbed
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: s4
+    environment:
+      <<: *common-variables
+    volumes:
+      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
+      - ./benchmarks/logs/${DATA_DIR}/s4:/var/log/testbed
+    networks:
+      - servers-network
+    ports:
+      - "8004:8004"
+  s5:
+    image: crdt-testbed
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: s5
+    environment:
+      <<: *common-variables
+    volumes:
+      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
+      - ./benchmarks/logs/${DATA_DIR}/s5:/var/log/testbed
+    networks:
+      - servers-network
+    ports:
+      - "8005:8005"
+  s6:
+    image: crdt-testbed
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: s6
+    environment:
+      <<: *common-variables
+    volumes:
+      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
+      - ./benchmarks/logs/${DATA_DIR}/s6:/var/log/testbed
+    networks:
+      - servers-network
+    ports:
+      - "8006:8006"
+  s7:
+    image: crdt-testbed
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: s7
+    environment:
+      <<: *common-variables
+    volumes:
+      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
+      - ./benchmarks/logs/${DATA_DIR}/s7:/var/log/testbed
+    networks:
+      - servers-network
+    ports:
+      - "8007:8007"
+  s8:
+    image: crdt-testbed
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: s8
+    environment:
+      <<: *common-variables
+    volumes:
+      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
+      - ./benchmarks/logs/${DATA_DIR}/s8:/var/log/testbed
+    networks:
+      - servers-network
+    ports:
+      - "8008:8008"
+  s9:
+    image: crdt-testbed
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: s9
+    environment:
+      <<: *common-variables
+    volumes:
+      - ./networks/${CONFIG_FILE}:/etc/testbed/network-config.toml
+      - ./benchmarks/logs/${DATA_DIR}/s9:/var/log/testbed
+    networks:
+      - servers-network
+    ports:
+      - "8009:8009"
+
+networks:
+  servers-network:
+    driver: bridge
