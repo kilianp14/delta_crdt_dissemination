@@ -12,8 +12,9 @@ use tokio::{
     time::sleep,
 };
 
-const POLL_TIMEOUT: Duration = Duration::from_secs(1);
-const NUMBER_OF_UPDATES: u64 = 10;
+const POLL_TIMEOUT: Duration = Duration::from_millis(500);
+const ADDITIONAL_SYNC_TIME: Duration = Duration::from_secs(20);
+const NUMBER_OF_UPDATES: u64 = 100;
 const NETWORK_BATCH_SIZE: usize = 100;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -125,7 +126,7 @@ impl<T: DeltaCRDT> Node<T> {
         // Give servers a bit more time to sync
         loop {
             tokio::select! {
-                _ = sleep(Duration::from_secs(10)) => {
+                _ = sleep(ADDITIONAL_SYNC_TIME) => {
                         break;
                 }
                 _ = async {
@@ -155,7 +156,10 @@ impl<T: DeltaCRDT> Node<T> {
 
                     let _ = self
                         .outgoing_messages
-                        .send((sender, ClusterMessage::DeltaRequest(version_vector)))
+                        .send((
+                            sender,
+                            ClusterMessage::DeltaRequest(self.version_vector.clone()),
+                        ))
                         .await;
                 }
 
@@ -241,7 +245,7 @@ impl<T: DeltaCRDT> Node<T> {
         // Save version_vector_states
         let mut wtr = Writer::from_path(self.data_dir.join("version_vector_states.csv"))?;
         // Assuming VersionVector implements Display or Debug
-        wtr.write_record(&["timestamp_micros", "version_vector"])?;
+        wtr.write_record(["timestamp_micros", "version_vector"])?;
         for (ts, vv) in &self.version_vector_states {
             wtr.write_record(&[ts.to_string(), format!("{:?}", vv)])?;
         }
