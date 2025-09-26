@@ -1,6 +1,6 @@
 #!/bin/bash
 
-config_files=("network_full.toml" "network_ring.toml" "network_chord.toml" "network_light.toml")
+config_files=("network_full.toml" "network_ring.toml" "network_sparse.toml" "network_light.toml")
 update_intervals=(50 100 200)
 strategies=("push" "pull" "pushpull")
 experiments=1
