@@ -41,7 +41,7 @@ pub struct Node<T: DeltaCRDT> {
     update_interval: Duration,
     get_delta_times: Vec<u128>,
     merge_delta_times: Vec<u128>,
-    received_message_sizes: Vec<usize>,
+    received_message_sizes: Vec<(usize, bool)>,
     version_vector_states: Vec<(u128, VersionVector)>,
     data_dir: PathBuf,
 }
@@ -144,16 +144,16 @@ impl<T: DeltaCRDT> Node<T> {
         cluster_messages: &mut Vec<(Pid, ClusterMessage<T>, usize)>,
     ) {
         for (sender, msg, msg_size) in cluster_messages.drain(..) {
-            self.received_message_sizes.push(msg_size);
             match msg {
                 ClusterMessage::Info(version_vector) => {
                     if !matches!(self.strategy, DisseminationStrategy::Proactive) {
                         continue;
                     }
                     if version_vector <= self.version_vector {
+                        self.received_message_sizes.push((msg_size, true));
                         continue;
                     }
-
+                    self.received_message_sizes.push((msg_size, false));
                     let _ = self
                         .outgoing_messages
                         .send((
@@ -165,8 +165,10 @@ impl<T: DeltaCRDT> Node<T> {
 
                 ClusterMessage::DeltaRequest(version_vector) => {
                     if version_vector >= self.version_vector {
+                        self.received_message_sizes.push((msg_size, true));
                         continue;
                     }
+                    self.received_message_sizes.push((msg_size, false));
 
                     let start = now_micros();
                     let delta = self.crdt.get_delta(&version_vector);
@@ -179,9 +181,11 @@ impl<T: DeltaCRDT> Node<T> {
 
                 ClusterMessage::Delta(delta, version_vector) => {
                     if version_vector <= self.version_vector {
+                        self.received_message_sizes.push((msg_size, true));
                         continue;
                     }
 
+                    self.received_message_sizes.push((msg_size, false));
                     let start = now_micros();
                     self.crdt.merge_delta(delta);
                     let end = now_micros();
@@ -236,9 +240,9 @@ impl<T: DeltaCRDT> Node<T> {
 
         // Save received_message_sizes
         let mut wtr = Writer::from_path(self.data_dir.join("received_message_sizes.csv"))?;
-        wtr.write_record(["size_bytes"])?;
-        for s in &self.received_message_sizes {
-            wtr.write_record(&[s.to_string()])?;
+        wtr.write_record(["size_bytes", "redundant"])?;
+        for (size, redundant) in &self.received_message_sizes {
+            wtr.write_record(&[size.to_string(), redundant.to_string()])?;
         }
         wtr.flush()?;
 
