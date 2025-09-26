@@ -58,6 +58,10 @@ impl VersionVector {
             *entry = (*entry).max(*counter);
         }
     }
+
+    pub fn get_set(&self) -> &HashMap<Pid, Counter> {
+        &self.set
+    }
 }
 
 pub trait DeltaCRDT: Clone + Debug + 'static {

@@ -249,9 +249,21 @@ impl<T: DeltaCRDT> Node<T> {
         // Save version_vector_states
         let mut wtr = Writer::from_path(self.data_dir.join("version_vector_states.csv"))?;
         // Assuming VersionVector implements Display or Debug
-        wtr.write_record(["timestamp_micros", "version_vector"])?;
+        let vv_set = self.version_vector.get_set();
+        let mut all_process_keys = vv_set.keys()
+            .collect::<Vec<_>>();
+        all_process_keys.sort();
+        let mut keys_as_strings = all_process_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>();
+        keys_as_strings.insert(0, String::from("timestamp_micros"));
+        wtr.write_record(keys_as_strings)?;
         for (ts, vv) in &self.version_vector_states {
-            wtr.write_record(&[ts.to_string(), format!("{:?}", vv)])?;
+            let sorted_keys = all_process_keys.clone();
+            let mut version_vector_values = Vec::with_capacity(sorted_keys.len());
+            for k in sorted_keys {
+                version_vector_values.push(vv.get_set().get(k).unwrap_or(&0).to_string());
+            }
+            version_vector_values.insert(0, ts.to_string());
+            wtr.write_record(version_vector_values)?;
         }
         wtr.flush()?;
 
