@@ -3,13 +3,18 @@
 config_files=("network_full.toml" "network_ring.toml" "network_chord.toml" "network_light.toml")
 update_intervals=(50 100 200)
 strategies=("push" "pull" "pushpull")
-experiments=5
+experiments=1
+
+# Compute total runs
+total_runs=$(( ${#config_files[@]} * ${#update_intervals[@]} * ${#strategies[@]} * experiments ))
+run=0
 
 for config in "${config_files[@]}"; do
   for interval in "${update_intervals[@]}"; do
     for strat in "${strategies[@]}"; do
       for exp in $(seq 1 $experiments); do
-        echo "=== Running experiment $exp with $config, interval=$interval, strategy=$strat ==="
+        run=$((run+1))
+        echo ">>> [$run/$total_runs] Experiment $exp | config=$config | interval=$interval | strategy=$strat"
 
         CONFIG_FILE=$config \
         DATA_DIR="exp_${config%.toml}_${interval}_${strat}_run$exp" \
@@ -17,7 +22,7 @@ for config in "${config_files[@]}"; do
         DISSEMINATION_STRATEGY=$strat \
         docker compose up
 
-        echo "=== Finished experiment $exp with $config, interval=$interval, strategy=$strat ==="
+        echo ">>> Finished [$run/$total_runs]"
         echo
       done
     done
