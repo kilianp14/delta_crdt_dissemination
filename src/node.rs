@@ -7,6 +7,7 @@ use csv::Writer;
 use rand::{rngs::ThreadRng, seq::IteratorRandom};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
+use std::collections::HashSet;
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     time::sleep,
@@ -36,6 +37,7 @@ pub struct Node<T: DeltaCRDT> {
     incoming_messages: Receiver<(Pid, ClusterMessage<T>, usize)>,
     outgoing_messages: Sender<(Pid, ClusterMessage<T>)>,
     strategy: DisseminationStrategy,
+    fan_out: usize,
     rng: ThreadRng,
     number_of_updates: u64,
     update_interval: Duration,
@@ -52,6 +54,7 @@ impl<T: DeltaCRDT> Node<T> {
         peers: Vec<Pid>,
         crdt: T,
         strategy: DisseminationStrategy,
+        fan_out: usize,
         update_interval: Duration,
         data_dir: PathBuf,
     ) -> Self {
@@ -66,6 +69,7 @@ impl<T: DeltaCRDT> Node<T> {
             incoming_messages,
             outgoing_messages,
             strategy,
+            fan_out,
             rng,
             number_of_updates: 0,
             update_interval,
@@ -90,8 +94,10 @@ impl<T: DeltaCRDT> Node<T> {
         loop {
             tokio::select! {
                 _ = poll_interval.tick(), if is_pull => {
-                    let rand_peer = self.peers.iter().choose(&mut self.rng).unwrap();
-                    let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
+                    let peers_to_pull = self.get_fanned_out_peers();
+                    for peer in peers_to_pull {
+                        let _ = self.outgoing_messages.send((peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
+                    }
                 },
                  _ = update_interval.tick() => {
                     if self.number_of_updates >= NUMBER_OF_UPDATES {
@@ -104,12 +110,15 @@ impl<T: DeltaCRDT> Node<T> {
                     match self.strategy {
                         DisseminationStrategy::Proactive => {
                             for peer in self.peers.iter() {
+                                // keep broadcast in proactive strategy
                                 let _ = self.outgoing_messages.send((*peer, ClusterMessage::Info(self.version_vector.clone()))).await;
                             }
                         }
                         DisseminationStrategy::Hybrid => {
-                            let rand_peer = self.peers.iter().choose(&mut self.rng).unwrap();
-                            let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
+                            let peers_to_pull = self.get_fanned_out_peers();
+                            for peer in peers_to_pull {
+                                let _ = self.outgoing_messages.send((peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
+                            }
                         }
                         _ => {}
                     }
@@ -268,5 +277,21 @@ impl<T: DeltaCRDT> Node<T> {
         wtr.flush()?;
 
         Ok(())
+    }
+
+    fn get_fanned_out_peers(&mut self) -> HashSet<Pid> {
+        if self.peers.len() <= self.fan_out {
+            return self.peers.iter().cloned().collect();
+        }
+        let mut peers_to_pull = HashSet::new();
+        let mut selected_peers = 0;
+        while selected_peers < self.fan_out {
+            let rand_peer = self.peers.iter().choose(&mut self.rng).unwrap();
+            if !peers_to_pull.contains(rand_peer) {
+                peers_to_pull.insert(rand_peer.clone());
+                selected_peers += 1;
+            }
+        }
+        peers_to_pull
     }
 }

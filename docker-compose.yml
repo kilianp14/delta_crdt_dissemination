@@ -4,6 +4,7 @@ x-common-variables: &common-variables
   UPDATE_INTERVAL: "${UPDATE_INTERVAL:-1000}"
   CONFIG_FILE: "/app/network-config.toml"
   DATA_DIR: "./log/"
+  FAN_OUT: "full"
 
 services:
   s0:

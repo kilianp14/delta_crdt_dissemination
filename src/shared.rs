@@ -1,11 +1,6 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::{
-    env,
-    path::{Path, PathBuf},
-    str::FromStr,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::{cmp, env, path::{Path, PathBuf}, str::FromStr, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 pub type Pid = u32;
 pub type Counter = u64;
@@ -31,6 +26,37 @@ impl FromStr for DisseminationStrategy {
             "pull" => Ok(DisseminationStrategy::Reactive),
             "pushpull" => Ok(DisseminationStrategy::Hybrid),
             other => Err(format!("Unknown Dissemination Strategy: {}", other)),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum FanOut {
+    One,
+    Logarithmic,
+    Full,
+}
+
+impl FromStr for FanOut {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "one" => Ok(FanOut::One),
+            "log" => Ok(FanOut::Logarithmic),
+            "full" => Ok(FanOut::Full),
+            other => Err(format!("Unknown Fan Out: {}", other)),
+        }
+    }
+}
+
+impl FanOut {
+    pub fn get_fanout(&self, number_of_linked_nodes: usize) -> usize {
+        match self {
+            FanOut::One => {1}
+            FanOut::Logarithmic => {cmp::max(1, (number_of_linked_nodes as f64).log2().ceil() as usize)
+            }
+            FanOut::Full => {number_of_linked_nodes}
         }
     }
 }
