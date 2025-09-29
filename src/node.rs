@@ -179,7 +179,8 @@ impl<T: DeltaCRDT> Node<T> {
                     }
                     self.received_message_sizes.push((msg_size, false));
                     let should_send_delta = version_vector.is_concurrent(&self.version_vector) || version_vector < self.version_vector;
-                    let should_send_delta_request = version_vector.is_concurrent(&self.version_vector) || version_vector > self.version_vector;
+                    let should_send_delta_request = !matches!(self.strategy, DisseminationStrategy::Proactive) &&
+                        (version_vector.is_concurrent(&self.version_vector) || version_vector > self.version_vector);
                     if (should_send_delta_request) {
                         let _ = self.outgoing_messages.send((sender,
                                                              ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
