@@ -62,6 +62,10 @@ impl VersionVector {
     pub fn get_set(&self) -> &HashMap<Pid, Counter> {
         &self.set
     }
+
+    pub fn is_concurrent(&self, version_vector: &VersionVector) -> bool {
+        self.partial_cmp(version_vector).is_none()
+    }
 }
 
 pub trait DeltaCRDT: Clone + Debug + 'static {
