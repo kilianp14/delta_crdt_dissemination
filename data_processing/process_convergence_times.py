@@ -6,7 +6,7 @@ base_dir = "../benchmarks/exp_network_full_200_push_run1"  # <-- set this
 folders = [f"s{i}" for i in range(10)]
 
 def load_rows_by_folder():
-    """Load rows grouped by folder."""
+    """load rows grouped by folder."""
     rows_by_folder = {}
     for folder in folders:
         rows = []
@@ -15,7 +15,7 @@ def load_rows_by_folder():
                 reader = csv.reader(f)
                 try:
                     _ = next(reader)
-                except StopIteration:
+                except stopiteration:
                     continue
                 for reader_row in reader:
                     ts = int(reader_row[0])
@@ -25,7 +25,7 @@ def load_rows_by_folder():
     return rows_by_folder
 
 def first_occurrence_thresholds(rows, k):
-    """Return list of (threshold, timestamp) for first occurrence of each value in column k."""
+    """return list of (threshold, timestamp) for first occurrence of each value in column k."""
     seen = set()
     result = []
     for ts, values in rows:
@@ -39,7 +39,7 @@ def first_occurrence_thresholds(rows, k):
 
 
 def process_folder_first_occurrence(data, k):
-    """Process folder s{k} using first occurrence per threshold in column k."""
+    """process folder s{k} using first occurrence per threshold in column k."""
     other_rows = []
     for j, folder in enumerate(folders):
         if j == k:
@@ -52,7 +52,7 @@ def process_folder_first_occurrence(data, k):
 
     for val, base_ts in thresholds:
         candidate_ts = [ts2 for ts2, vals2 in other_rows if vals2[k] >= val]
-        min_ts = min(candidate_ts) if candidate_ts else None
+        min_ts = min(candidate_ts) if candidate_ts else none
 
         results.append({
             "from_folder": f"s{k}",

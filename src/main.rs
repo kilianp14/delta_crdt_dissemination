@@ -1,10 +1,10 @@
+use crate::shared::FanOut;
 use crate::{
     node::Node,
     or_set::OrSet,
     shared::{to_absolute, DisseminationStrategy, NetworkConfig, Pid},
 };
 use std::{env, fs, str::FromStr, time::Duration};
-use crate::shared::FanOut;
 
 mod crdt;
 mod network;
@@ -29,8 +29,7 @@ async fn main() {
         Err(_) => panic!("Requires DISSEMINATION_STRATEGY environment variable"),
     };
     let fan_out = match env::var("FAN_OUT") {
-        Ok(f) => FanOut::from_str(&f)
-            .expect("Invalid fan out: {f}"),
+        Ok(f) => FanOut::from_str(&f).expect("Invalid fan out: {f}"),
         Err(_) => panic!("Requires FAN_OUT environment variable"),
     };
     let update_interval_millis: u64 = env::var("UPDATE_INTERVAL")

@@ -6,16 +6,16 @@ use crate::{
 use csv::Writer;
 use rand::{rngs::ThreadRng, seq::IteratorRandom};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, time::Duration};
 use std::collections::HashSet;
+use std::{path::PathBuf, time::Duration};
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     time::sleep,
 };
 
-const POLL_TIMEOUT: Duration = Duration::from_millis(500);
-const ADDITIONAL_SYNC_TIME: Duration = Duration::from_secs(20);
-const NUMBER_OF_UPDATES: u64 = 100;
+const POLL_TIMEOUT: Duration = Duration::from_millis(100);
+const ADDITIONAL_SYNC_TIME: Duration = Duration::from_secs(3);
+const NUMBER_OF_UPDATES: u64 = 30;
 const NETWORK_BATCH_SIZE: usize = 100;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -132,12 +132,20 @@ impl<T: DeltaCRDT> Node<T> {
             }
         }
 
-        // Give servers a bit more time to sync
+        let sleep_fut = sleep(ADDITIONAL_SYNC_TIME);
+        tokio::pin!(sleep_fut);
+
         loop {
             tokio::select! {
-                _ = sleep(ADDITIONAL_SYNC_TIME) => {
-                        break;
+                _ = &mut sleep_fut => {
+                    break;
                 }
+                _ = poll_interval.tick(), if is_pull => {
+                    let peers_to_pull = self.get_fanned_out_peers();
+                    for peer in peers_to_pull {
+                        let _ = self.outgoing_messages.send((peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
+                    }
+                },
                 _ = async {
                     self.incoming_messages.recv_many(&mut cluster_msg_buf, NETWORK_BATCH_SIZE).await
                 } => {
@@ -178,14 +186,22 @@ impl<T: DeltaCRDT> Node<T> {
                         continue;
                     }
                     self.received_message_sizes.push((msg_size, false));
-                    let should_send_delta = version_vector.is_concurrent(&self.version_vector) || version_vector < self.version_vector;
-                    let should_send_delta_request = !matches!(self.strategy, DisseminationStrategy::Proactive) &&
-                        (version_vector.is_concurrent(&self.version_vector) || version_vector > self.version_vector);
-                    if (should_send_delta_request) {
-                        let _ = self.outgoing_messages.send((sender,
-                                                             ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
+                    let should_send_delta = version_vector.is_concurrent(&self.version_vector)
+                        || version_vector < self.version_vector;
+                    let should_send_delta_request =
+                        !matches!(self.strategy, DisseminationStrategy::Proactive)
+                            && (version_vector.is_concurrent(&self.version_vector)
+                                || version_vector > self.version_vector);
+                    if should_send_delta_request {
+                        let _ = self
+                            .outgoing_messages
+                            .send((
+                                sender,
+                                ClusterMessage::DeltaRequest(self.version_vector.clone()),
+                            ))
+                            .await;
                     }
-                    if (should_send_delta) {
+                    if should_send_delta {
                         let start = now_micros();
                         let delta = self.crdt.get_delta(&version_vector);
                         let end = now_micros();
@@ -267,10 +283,12 @@ impl<T: DeltaCRDT> Node<T> {
         let mut wtr = Writer::from_path(self.data_dir.join("version_vector_states.csv"))?;
         // Assuming VersionVector implements Display or Debug
         let vv_set = self.version_vector.get_set();
-        let mut all_process_keys = vv_set.keys()
-            .collect::<Vec<_>>();
+        let mut all_process_keys = vv_set.keys().collect::<Vec<_>>();
         all_process_keys.sort();
-        let mut keys_as_strings = all_process_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>();
+        let mut keys_as_strings = all_process_keys
+            .iter()
+            .map(|k| k.to_string())
+            .collect::<Vec<_>>();
         keys_as_strings.insert(0, String::from("timestamp_micros"));
         wtr.write_record(keys_as_strings)?;
         for (ts, vv) in &self.version_vector_states {
@@ -291,15 +309,11 @@ impl<T: DeltaCRDT> Node<T> {
         if self.peers.len() <= self.fan_out {
             return self.peers.iter().cloned().collect();
         }
-        let mut peers_to_pull = HashSet::new();
-        let mut selected_peers = 0;
-        while selected_peers < self.fan_out {
-            let rand_peer = self.peers.iter().choose(&mut self.rng).unwrap();
-            if !peers_to_pull.contains(rand_peer) {
-                peers_to_pull.insert(rand_peer.clone());
-                selected_peers += 1;
-            }
-        }
-        peers_to_pull
+        self.peers
+            .iter()
+            .choose_multiple(&mut self.rng, self.fan_out)
+            .iter()
+            .map(|x| **x)
+            .collect()
     }
 }

@@ -87,6 +87,4 @@ pub trait DeltaCRDT: Clone + Debug + 'static {
     fn merge_delta(&mut self, delta: Self::Delta);
 
     fn generate_random_update(&self, rng: &mut ThreadRng) -> Self::Update;
-
-    fn show_state(&self); //TODO for debugging - may remove later
 }
