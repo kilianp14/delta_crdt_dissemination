@@ -1,5 +1,8 @@
 import csv
 import os
+import re
+import pandas as pd
+from collections import defaultdict
 
 def aggregate_received_messages(base_folder):
     folders = [f"s{i}" for i in range(10)]
@@ -35,12 +38,58 @@ def aggregate_received_messages(base_folder):
         "redundant_percentage": redundant_percentage
     }
 
-if __name__ == "__main__":
-    base_folder = "../benchmarks/exp_network_full_200_push_run1"
-    stats = aggregate_received_messages(base_folder)
+def parse_folder_name(folder_name):
+    """
+    Example: exp_networkring_100_pushpull_full_run3
+             -> ('networkring', 100, 'pushpull', 'full')
+    """
+    match = re.match(r"exp_([^_]+)_(\d+)_(\w+)_(\w+)_run\d+", folder_name)
+    if not match:
+        return None
+    return match.groups()
 
-    print("Received Message Sizes Aggregation:")
-    print(f"Total bytes: {stats['total_bytes']}")
-    print(f"Total redundant bytes: {stats['redundant_bytes']}")
-    print(f"Number of redundant messages: {stats['redundant_count']}")
-    print(f"Percentage of redundant messages: {stats['redundant_percentage']:.2f}%")
+if __name__ == "__main__":
+    base_path = "../benchmarks"
+    grouped_results = defaultdict(list)
+
+    for folder in os.listdir(base_path):
+        folder_path = os.path.join(base_path, folder)
+        if not os.path.isdir(folder_path):
+            continue
+
+        parsed = parse_folder_name(folder)
+        if not parsed:
+            continue
+
+        network, fanout, strategy, dissemination = parsed
+        stats = aggregate_received_messages(folder_path)
+
+        key = (network, int(fanout), strategy, dissemination)
+        grouped_results[key].append(stats)
+
+    # Compute averages across runs
+    averaged_results = []
+    for (network, fanout, strategy, dissemination), runs in grouped_results.items():
+        avg_total_bytes = sum(r["total_bytes"] for r in runs) / len(runs)
+        avg_redundant_bytes = sum(r["redundant_bytes"] for r in runs) / len(runs)
+        avg_redundant_count = sum(r["redundant_count"] for r in runs) / len(runs)
+        avg_redundant_percentage = sum(r["redundant_percentage"] for r in runs) / len(runs)
+
+        averaged_results.append({
+            "network": network,
+            "fanout": fanout,
+            "strategy": strategy,
+            "dissemination": dissemination,
+            "avg_total_bytes": avg_total_bytes,
+            "avg_redundant_bytes": avg_redundant_bytes,
+            "avg_redundant_count": avg_redundant_count,
+            "avg_redundant_percentage": avg_redundant_percentage
+        })
+
+    # Save combined averaged results
+    df = pd.DataFrame(averaged_results)
+    os.makedirs('results', exist_ok=True)
+    df.to_csv("results/received_messages_totals_avg.csv", index=False)
+
+    print("Aggregation complete. Results saved to received_messages_totals_avg.csv")
+    print(df.head())
