@@ -8,7 +8,7 @@ Tech-Stack: Rust (Core), Docker/ Docker Compose (Orchestration), TCP (Networking
 ### Quick Start
 ```bash
 cargo build --release
-docker-compose up --build
+./experiments.sh
 ```
 
 ### Empirical Results
