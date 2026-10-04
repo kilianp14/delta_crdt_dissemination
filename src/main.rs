@@ -1,8 +1,10 @@
-use crate::node::Node;
-use crate::or_set::OrSet;
-use crate::shared::{DisseminationStrategy, TestbedConfig};
-use std::str::FromStr;
-use std::{env, fs};
+use crate::shared::FanOut;
+use crate::{
+    node::Node,
+    or_set::OrSet,
+    shared::{to_absolute, DisseminationStrategy, NetworkConfig, Pid},
+};
+use std::{env, fs, str::FromStr, time::Duration};
 
 mod crdt;
 mod network;
@@ -17,24 +19,42 @@ async fn main() {
         Ok(file_path) => file_path,
         Err(_) => panic!("Requires CONFIG_FILE environment variable"),
     };
+    let data_dir = match env::var("DATA_DIR") {
+        Ok(file_path) => file_path,
+        Err(_) => panic!("Requires DATA_DIR environment variable"),
+    };
     let dissemination_strategy = match env::var("DISSEMINATION_STRATEGY") {
         Ok(dis_str) => DisseminationStrategy::from_str(&dis_str)
             .expect("Invalid dissemination strategy: {dis_str}"),
         Err(_) => panic!("Requires DISSEMINATION_STRATEGY environment variable"),
     };
-    let config_string = fs::read_to_string(config_file).unwrap();
-    let server_config: TestbedConfig = match toml::from_str(&config_string) {
-        Ok(parsed_config) => parsed_config,
-        Err(e) => panic!("{e}"),
+    let fan_out = match env::var("FAN_OUT") {
+        Ok(f) => FanOut::from_str(&f).expect("Invalid fan out: {f}"),
+        Err(_) => panic!("Requires FAN_OUT environment variable"),
     };
-    println!("{server_config:?}");
-    //let mut cluster_msg_buf = Vec::with_capacity(NETWORK_BATCH_SIZE);
-    let crdt: OrSet<i32> = OrSet::new(server_config.server_id);
+    let update_interval_millis: u64 = env::var("UPDATE_INTERVAL")
+        .expect("Missing UPDATE_INTERVAL")
+        .parse::<u64>()
+        .expect("UPDATE_INTERVAL must be valid");
+    let pid_string = env::var("SERVER_ID").expect("Missing SERVER_ID");
+    let config_string = fs::read_to_string(config_file).unwrap();
+    let server_config: NetworkConfig = toml::from_str(&config_string).unwrap();
+
+    let peers = server_config
+        .servers
+        .get(&pid_string)
+        .ok_or("Invalid pid")
+        .unwrap();
+    let pid: Pid = pid_string.parse().unwrap();
+    let crdt: OrSet<i32> = OrSet::new(pid);
     let mut node: Node<OrSet<i32>> = Node::new(
-        server_config.server_id,
-        server_config.peers,
+        pid,
+        peers.clone(),
         crdt,
         dissemination_strategy,
+        fan_out.get_fanout(peers.len()),
+        Duration::from_millis(update_interval_millis),
+        to_absolute(data_dir),
     )
     .await;
     node.run().await;

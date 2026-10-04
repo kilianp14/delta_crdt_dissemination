@@ -176,11 +176,6 @@ impl<T: OrSetItem> DeltaCRDT for OrSet<T> {
             }
         }
     }
-
-    fn show_state(&self) {
-        println!("adds: {:?}, tombstones: {:?}", self.adds, self.tombstones);
-        println!("{:?}", self.query(OrSetQuery::Members));
-    }
 }
 
 impl<T: OrSetItem> OrSet<T> {
@@ -193,12 +188,11 @@ impl<T: OrSetItem> OrSet<T> {
     }
 }
 
-
 mod tuple_key_map {
-    use std::collections::HashMap;
     use super::*;
-    use serde::{Serializer, Deserializer};
     use serde::de::Error;
+    use serde::{Deserializer, Serializer};
+    use std::collections::HashMap;
 
     pub fn serialize<S>(
         map: &HashMap<(Pid, Counter), (Pid, Counter)>,
@@ -209,9 +203,7 @@ mod tuple_key_map {
     {
         let converted: HashMap<String, &(Pid, Counter)> = map
             .iter()
-            .map(|((pid, counter), value)| {
-                (format!("{}:{}", pid, counter), value)
-            })
+            .map(|((pid, counter), value)| (format!("{}:{}", pid, counter), value))
             .collect();
         converted.serialize(serializer)
     }
@@ -226,8 +218,12 @@ mod tuple_key_map {
         raw.into_iter()
             .map(|(k, v)| {
                 let mut parts = k.splitn(2, ':');
-                let pid = parts.next().ok_or_else(|| D::Error::custom("missing pid"))?;
-                let counter = parts.next().ok_or_else(|| D::Error::custom("missing counter"))?
+                let pid = parts
+                    .next()
+                    .ok_or_else(|| D::Error::custom("missing pid"))?;
+                let counter = parts
+                    .next()
+                    .ok_or_else(|| D::Error::custom("missing counter"))?
                     .parse::<Counter>()
                     .map_err(D::Error::custom)?;
                 let pid_val: Pid = pid.parse().map_err(D::Error::custom)?;
@@ -236,3 +232,4 @@ mod tuple_key_map {
             .collect()
     }
 }
+

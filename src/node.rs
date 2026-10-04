@@ -1,16 +1,21 @@
-use crate::crdt::{DeltaCRDT, VersionVector};
-use crate::network;
-use crate::shared::{DisseminationStrategy, JitteredInterval, Pid};
-use rand::rngs::ThreadRng;
-use rand::seq::IteratorRandom;
+use crate::{
+    crdt::{DeltaCRDT, VersionVector},
+    network,
+    shared::{now_micros, DisseminationStrategy, JitteredInterval, Pid},
+};
+use csv::Writer;
+use rand::{rngs::ThreadRng, seq::IteratorRandom};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use tokio::sync::mpsc::{Receiver, Sender};
+use std::collections::HashSet;
+use std::{path::PathBuf, time::Duration};
+use tokio::{
+    sync::mpsc::{Receiver, Sender},
+    time::sleep,
+};
 
 const POLL_TIMEOUT: Duration = Duration::from_millis(100);
-const UPDATE_TIMEOUT: Duration = Duration::from_secs(1);
-const LOG_STATE_TIMEOUT: Duration = Duration::from_secs(5);
-
+const ADDITIONAL_SYNC_TIME: Duration = Duration::from_secs(3);
+const NUMBER_OF_UPDATES: u64 = 30;
 const NETWORK_BATCH_SIZE: usize = 100;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -28,15 +33,31 @@ pub struct Node<T: DeltaCRDT> {
     crdt: T,
     version_vector: VersionVector,
     peers: Vec<Pid>,
-    incoming_messages: Receiver<(Pid, ClusterMessage<T>)>,
+    // Sender id, message, message size in bytes
+    incoming_messages: Receiver<(Pid, ClusterMessage<T>, usize)>,
     outgoing_messages: Sender<(Pid, ClusterMessage<T>)>,
     strategy: DisseminationStrategy,
+    fan_out: usize,
     rng: ThreadRng,
     number_of_updates: u64,
+    update_interval: Duration,
+    get_delta_times: Vec<u128>,
+    merge_delta_times: Vec<u128>,
+    received_message_sizes: Vec<(usize, bool)>,
+    version_vector_states: Vec<(u128, VersionVector)>,
+    data_dir: PathBuf,
 }
 
 impl<T: DeltaCRDT> Node<T> {
-    pub async fn new(pid: Pid, peers: Vec<Pid>, crdt: T, strategy: DisseminationStrategy) -> Self {
+    pub async fn new(
+        pid: Pid,
+        peers: Vec<Pid>,
+        crdt: T,
+        strategy: DisseminationStrategy,
+        fan_out: usize,
+        update_interval: Duration,
+        data_dir: PathBuf,
+    ) -> Self {
         let (incoming_messages, outgoing_messages) =
             network::launch::<ClusterMessage<T>>(pid, peers.clone()).await;
         let rng = rand::thread_rng();
@@ -48,8 +69,15 @@ impl<T: DeltaCRDT> Node<T> {
             incoming_messages,
             outgoing_messages,
             strategy,
+            fan_out,
             rng,
             number_of_updates: 0,
+            update_interval,
+            get_delta_times: Vec::with_capacity(1000),
+            merge_delta_times: Vec::with_capacity(1000),
+            received_message_sizes: Vec::with_capacity(10000),
+            version_vector_states: Vec::with_capacity(1000),
+            data_dir,
         }
     }
 
@@ -60,34 +88,62 @@ impl<T: DeltaCRDT> Node<T> {
         );
 
         let mut poll_interval = JitteredInterval::new(POLL_TIMEOUT, POLL_TIMEOUT);
-        let mut update_interval = JitteredInterval::new(UPDATE_TIMEOUT, UPDATE_TIMEOUT);
+        let mut update_interval = JitteredInterval::new(self.update_interval, self.update_interval);
 
-        let mut log_state_interval = tokio::time::interval(LOG_STATE_TIMEOUT);
         let mut cluster_msg_buf = Vec::with_capacity(NETWORK_BATCH_SIZE);
         loop {
             tokio::select! {
                 _ = poll_interval.tick(), if is_pull => {
-                    let rand_peer = self.peers.iter().choose(&mut self.rng).unwrap();
-                    let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
+                    let peers_to_pull = self.get_fanned_out_peers();
+                    for peer in peers_to_pull {
+                        let _ = self.outgoing_messages.send((peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
+                    }
                 },
                  _ = update_interval.tick() => {
-                    if self.number_of_updates < 10 {
-                        self.number_of_updates += 1;
-                        let update = self.crdt.generate_random_update(&mut self.rng);
-                        self.version_vector.increment(self.pid);
-                        self.crdt.update(update, (self.pid, self.version_vector.get(&self.pid)));
-                        match self.strategy {
-                            DisseminationStrategy::Proactive => {
-                                for peer in self.peers.iter() {
-                                    let _ = self.outgoing_messages.send((*peer, ClusterMessage::Info(self.version_vector.clone()))).await;
-                                }
+                    if self.number_of_updates >= NUMBER_OF_UPDATES {
+                        break;
+                    }
+                    self.number_of_updates += 1;
+                    let update = self.crdt.generate_random_update(&mut self.rng);
+                    self.version_vector.increment(self.pid);
+                    self.crdt.update(update, (self.pid, self.version_vector.get(&self.pid)));
+                    match self.strategy {
+                        DisseminationStrategy::Proactive => {
+                            for peer in self.peers.iter() {
+                                // keep broadcast in proactive strategy
+                                let _ = self.outgoing_messages.send((*peer, ClusterMessage::Info(self.version_vector.clone()))).await;
                             }
-                            DisseminationStrategy::Hybrid => {
-                                let rand_peer = self.peers.iter().choose(&mut self.rng).unwrap();
-                                let _ = self.outgoing_messages.send((*rand_peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
-                            }
-                            _ => {}
                         }
+                        DisseminationStrategy::Hybrid => {
+                            let peers_to_pull = self.get_fanned_out_peers();
+                            for peer in peers_to_pull {
+                                let _ = self.outgoing_messages.send((peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
+                            }
+                        }
+                        _ => {}
+                    }
+                    self.version_vector_states.push((now_micros(), self.version_vector.clone()));
+                },
+                _ = async {
+                    self.incoming_messages.recv_many(&mut cluster_msg_buf, NETWORK_BATCH_SIZE).await
+                } => {
+                    self.handle_cluster_messages(&mut cluster_msg_buf).await;
+                },
+            }
+        }
+
+        let sleep_fut = sleep(ADDITIONAL_SYNC_TIME);
+        tokio::pin!(sleep_fut);
+
+        loop {
+            tokio::select! {
+                _ = &mut sleep_fut => {
+                    break;
+                }
+                _ = poll_interval.tick(), if is_pull => {
+                    let peers_to_pull = self.get_fanned_out_peers();
+                    for peer in peers_to_pull {
+                        let _ = self.outgoing_messages.send((peer, ClusterMessage::DeltaRequest(self.version_vector.clone()))).await;
                     }
                 },
                 _ = async {
@@ -95,60 +151,169 @@ impl<T: DeltaCRDT> Node<T> {
                 } => {
                     self.handle_cluster_messages(&mut cluster_msg_buf).await;
                 },
-                _ = log_state_interval.tick() => {
-                    println!("{:?}", self.version_vector);
-                    let test = self.crdt.show_state();
-                },
             }
         }
+        self.save_metrics().await.expect("Saving metrics failed");
     }
 
     async fn handle_cluster_messages(
         &mut self,
-        cluster_messages: &mut Vec<(Pid, ClusterMessage<T>)>,
+        cluster_messages: &mut Vec<(Pid, ClusterMessage<T>, usize)>,
     ) {
-        for (sender, msg) in cluster_messages.drain(..) {
+        for (sender, msg, msg_size) in cluster_messages.drain(..) {
             match msg {
                 ClusterMessage::Info(version_vector) => {
-                    if matches!(self.strategy, DisseminationStrategy::Proactive)
-                        && !(version_vector < self.version_vector)
-                    {
+                    if !matches!(self.strategy, DisseminationStrategy::Proactive) {
+                        continue;
+                    }
+                    if version_vector <= self.version_vector {
+                        self.received_message_sizes.push((msg_size, true));
+                        continue;
+                    }
+                    self.received_message_sizes.push((msg_size, false));
+                    let _ = self
+                        .outgoing_messages
+                        .send((
+                            sender,
+                            ClusterMessage::DeltaRequest(self.version_vector.clone()),
+                        ))
+                        .await;
+                }
+
+                ClusterMessage::DeltaRequest(version_vector) => {
+                    if version_vector == self.version_vector {
+                        self.received_message_sizes.push((msg_size, true));
+                        continue;
+                    }
+                    self.received_message_sizes.push((msg_size, false));
+                    let should_send_delta = version_vector.is_concurrent(&self.version_vector)
+                        || version_vector < self.version_vector;
+                    let should_send_delta_request =
+                        !matches!(self.strategy, DisseminationStrategy::Proactive)
+                            && (version_vector.is_concurrent(&self.version_vector)
+                                || version_vector > self.version_vector);
+                    if should_send_delta_request {
                         let _ = self
                             .outgoing_messages
-                            .send((sender, ClusterMessage::DeltaRequest(version_vector)))
+                            .send((
+                                sender,
+                                ClusterMessage::DeltaRequest(self.version_vector.clone()),
+                            ))
                             .await;
                     }
-                }
-                ClusterMessage::DeltaRequest(version_vector) => {
-                    if !(self.version_vector < version_vector) {
+                    if should_send_delta {
+                        let start = now_micros();
                         let delta = self.crdt.get_delta(&version_vector);
+                        let end = now_micros();
+                        self.get_delta_times.push(end - start);
+
                         let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
                         let _ = self.outgoing_messages.send((sender, msg)).await;
                     }
                 }
+
                 ClusterMessage::Delta(delta, version_vector) => {
-                    if !(version_vector < self.version_vector) {
-                        self.crdt.merge_delta(delta);
-                        self.version_vector.merge(&version_vector);
-                        match self.strategy {
-                            DisseminationStrategy::Proactive => {
-                                for peer in self.peers.iter() {
-                                    if *peer != sender {
-                                        let msg = ClusterMessage::Info(self.version_vector.clone());
-                                        let _ = self.outgoing_messages.send((*peer, msg)).await;
-                                    }
+                    if version_vector <= self.version_vector {
+                        self.received_message_sizes.push((msg_size, true));
+                        continue;
+                    }
+
+                    self.received_message_sizes.push((msg_size, false));
+                    let start = now_micros();
+                    self.crdt.merge_delta(delta);
+                    let end = now_micros();
+                    self.merge_delta_times.push(end - start);
+
+                    self.version_vector.merge(&version_vector);
+
+                    match self.strategy {
+                        DisseminationStrategy::Proactive => {
+                            for peer in self.peers.iter() {
+                                if *peer != sender {
+                                    let msg = ClusterMessage::Info(self.version_vector.clone());
+                                    let _ = self.outgoing_messages.send((*peer, msg)).await;
                                 }
                             }
-                            DisseminationStrategy::Hybrid => {
-                                let delta = self.crdt.get_delta(&version_vector);
-                                let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
-                                let _ = self.outgoing_messages.send((sender, msg)).await;
-                            }
-                            _ => {}
                         }
+                        DisseminationStrategy::Hybrid => {
+                            let start = now_micros();
+                            let delta = self.crdt.get_delta(&version_vector);
+                            let end = now_micros();
+                            self.get_delta_times.push(end - start);
+
+                            let msg = ClusterMessage::Delta(delta, self.version_vector.clone());
+                            let _ = self.outgoing_messages.send((sender, msg)).await;
+                        }
+                        _ => {}
                     }
+
+                    self.version_vector_states
+                        .push((now_micros(), self.version_vector.clone()));
                 }
             }
         }
+    }
+
+    async fn save_metrics(&self) -> std::io::Result<()> {
+        // Save get_delta_times
+        let mut wtr = Writer::from_path(self.data_dir.join("get_delta_times.csv"))?;
+        wtr.write_record(["time_micros"])?;
+        for t in &self.get_delta_times {
+            wtr.write_record(&[t.to_string()])?;
+        }
+        wtr.flush()?;
+
+        // Save merge_delta_times
+        let mut wtr = Writer::from_path(self.data_dir.join("merge_delta_times.csv"))?;
+        wtr.write_record(["time_micros"])?;
+        for t in &self.merge_delta_times {
+            wtr.write_record(&[t.to_string()])?;
+        }
+        wtr.flush()?;
+
+        // Save received_message_sizes
+        let mut wtr = Writer::from_path(self.data_dir.join("received_message_sizes.csv"))?;
+        wtr.write_record(["size_bytes", "redundant"])?;
+        for (size, redundant) in &self.received_message_sizes {
+            wtr.write_record(&[size.to_string(), redundant.to_string()])?;
+        }
+        wtr.flush()?;
+
+        // Save version_vector_states
+        let mut wtr = Writer::from_path(self.data_dir.join("version_vector_states.csv"))?;
+        // Assuming VersionVector implements Display or Debug
+        let vv_set = self.version_vector.get_set();
+        let mut all_process_keys = vv_set.keys().collect::<Vec<_>>();
+        all_process_keys.sort();
+        let mut keys_as_strings = all_process_keys
+            .iter()
+            .map(|k| k.to_string())
+            .collect::<Vec<_>>();
+        keys_as_strings.insert(0, String::from("timestamp_micros"));
+        wtr.write_record(keys_as_strings)?;
+        for (ts, vv) in &self.version_vector_states {
+            let sorted_keys = all_process_keys.clone();
+            let mut version_vector_values = Vec::with_capacity(sorted_keys.len());
+            for k in sorted_keys {
+                version_vector_values.push(vv.get_set().get(k).unwrap_or(&0).to_string());
+            }
+            version_vector_values.insert(0, ts.to_string());
+            wtr.write_record(version_vector_values)?;
+        }
+        wtr.flush()?;
+
+        Ok(())
+    }
+
+    fn get_fanned_out_peers(&mut self) -> HashSet<Pid> {
+        if self.peers.len() <= self.fan_out {
+            return self.peers.iter().cloned().collect();
+        }
+        self.peers
+            .iter()
+            .choose_multiple(&mut self.rng, self.fan_out)
+            .iter()
+            .map(|x| **x)
+            .collect()
     }
 }

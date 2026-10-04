@@ -17,7 +17,7 @@ use tokio::{
     },
 };
 
-pub async fn launch<T>(pid: Pid, peers: Vec<Pid>) -> (Receiver<(Pid, T)>, Sender<(Pid, T)>)
+pub async fn launch<T>(pid: Pid, peers: Vec<Pid>) -> (Receiver<(Pid, T, usize)>, Sender<(Pid, T)>)
 where
     T: Send + 'static + Serialize + DeserializeOwned + Debug + Sync + Clone,
 {
@@ -26,7 +26,7 @@ where
         .await
         .expect("Failed to bind to address");
 
-    let (cluster_sender, cluster_receiver) = channel::<(Pid, T)>(1000);
+    let (cluster_sender, cluster_receiver) = channel::<(Pid, T, usize)>(1000);
     let (user_sender, mut user_receiver) = channel::<(Pid, T)>(1000);
 
     // Map of peer -> sender to its write loop
@@ -76,7 +76,7 @@ where
 async fn handle_new_stream<T>(
     mut stream: TcpStream,
     pid: Pid,
-    cluster_sender: Sender<(Pid, T)>,
+    cluster_sender: Sender<(Pid, T, usize)>,
     peer_senders: Arc<Mutex<HashMap<Pid, Sender<T>>>>,
 ) where
     T: Send + 'static + Serialize + DeserializeOwned + Debug + Sync + Clone,
@@ -98,13 +98,16 @@ async fn handle_new_stream<T>(
 async fn read_loop<T>(
     mut reader: Lines<BufReader<ReadHalf<TcpStream>>>,
     peer: Pid,
-    cluster_sender: Sender<(Pid, T)>,
+    cluster_sender: Sender<(Pid, T, usize)>,
 ) where
     T: Send + 'static + Serialize + DeserializeOwned + Debug + Sync + Clone,
 {
     while let Ok(Some(line)) = reader.next_line().await {
+        let message_size_bytes = line.len();
         let message: T = serde_json::from_str(&line).unwrap();
-        let _ = cluster_sender.send((peer, message)).await;
+        let _ = cluster_sender
+            .send((peer, message, message_size_bytes))
+            .await;
     }
 }
 

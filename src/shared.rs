@@ -1,17 +1,13 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::{
-    str::FromStr,
-    time::{Duration, Instant},
-};
+use std::{cmp, env, path::{Path, PathBuf}, str::FromStr, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 pub type Pid = u32;
 pub type Counter = u64;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TestbedConfig {
-    pub server_id: Pid,
-    pub peers: Vec<Pid>,
+pub struct NetworkConfig {
+    pub servers: std::collections::HashMap<String, Vec<Pid>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -28,8 +24,39 @@ impl FromStr for DisseminationStrategy {
         match s.to_lowercase().as_str() {
             "push" => Ok(DisseminationStrategy::Proactive),
             "pull" => Ok(DisseminationStrategy::Reactive),
-            "push-pull" => Ok(DisseminationStrategy::Hybrid),
+            "pushpull" => Ok(DisseminationStrategy::Hybrid),
             other => Err(format!("Unknown Dissemination Strategy: {}", other)),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum FanOut {
+    One,
+    Logarithmic,
+    Full,
+}
+
+impl FromStr for FanOut {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "one" => Ok(FanOut::One),
+            "log" => Ok(FanOut::Logarithmic),
+            "full" => Ok(FanOut::Full),
+            other => Err(format!("Unknown Fan Out: {}", other)),
+        }
+    }
+}
+
+impl FanOut {
+    pub fn get_fanout(&self, number_of_linked_nodes: usize) -> usize {
+        match self {
+            FanOut::One => {1}
+            FanOut::Logarithmic => {cmp::max(1, (number_of_linked_nodes as f64).log2().ceil() as usize)
+            }
+            FanOut::Full => {number_of_linked_nodes}
         }
     }
 }
@@ -66,4 +93,20 @@ impl JitteredInterval {
         self.next_elapse = now + self.base_interval + jitter;
         now
     }
+}
+
+pub fn to_absolute<P: AsRef<Path>>(input: P) -> PathBuf {
+    let path = input.as_ref();
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir().unwrap().join(path)
+    }
+}
+
+pub fn now_micros() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_micros()
 }
